@@ -246,7 +246,8 @@ def latex_to_text(latex):
     conversions = {'{': '', '}': '', '$': '', '^': '', '_': '', r'\ss': 'ss',
                    r'\gt': '>', r'\lt': '<', r"\'": '', r'\times': 'x',
                    r'\~': '~', '/': ' ', r'\tilde': '~', r'\alpha': 'alpha',
-                   r'\beta': 'beta', '&': r'\&', r'\ndash': '-'}
+                   r'\beta': 'beta', '&': r'\&', r'\ndash': '-', r'\"': '',
+                   r"\'": ''}
     for key in conversions:
         latex = latex.replace(key, conversions[key])
     latex = latex.replace('\\', '')
@@ -339,13 +340,15 @@ def write_new_entry(identifier, out_file):
     for line in range(len(bib)):
         line_list = bib[line].split()
         if line_list[0] == 'author':
-            if line_list[3] == 'Jr.,':
-                del(line_list[3])
-            author = line_list[2][2:line_list[2].find(',') - 1].lower()
-            details['author'] = latex_to_text(author)
-            details['initials'] = '+'.join([i for i in
-                    ' '.join(line_list[3:])[: ' '.join(line_list).find('and')
-                                            ].lower() if i.isalpha()])
+            details['author'] = re.search('(?<={{).*?(?=},)',
+                                          bib[line]).group()
+            details['initials'] = re.search('(?<=}, ).*?(?=(}| and))',
+                                            bib[line]).group()
+            if details['initials'][:4] == 'Jr.,':
+                details['initials'] = details['initials'][4:]
+            details['initials'] = '+'.join([i for i in details['initials']
+                                            if i.isalpha()])
+            details['author'] = latex_to_text(details['author'])
         elif line_list[0] == 'year':
             details['year'] = line_list[2][:-1]
         elif line_list[0] == 'journal':
@@ -426,11 +429,11 @@ def main():
         try:
             paper_info = write_new_entry(identifier=identifier,
                                          out_file=bib_file)
-            new_name = args.directory + '{0}{1} - {2} - {3}.pdf' \
-                        .format(paper_info[0][0].upper(),
-                                paper_info[0][1:],
+            new_name = args.directory + '{0} - {1} - {2}.pdf' \
+                        .format(paper_info[0],
                                 paper_info[1][len(paper_info[0]):],
                                 paper_info[2])
+
             print(pdf + '\n', ' -->', new_name)
             count['added'] += 1
             os.rename(pdf, new_name)

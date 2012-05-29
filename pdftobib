@@ -86,15 +86,16 @@ def exists_in_bib(pdf, bib_file):
         pass
     try:
         name_end = pdf.index(' - ')
-        ref_name = (pdf[:name_end] +
-                    pdf[(name_end + 3):][:(pdf[(name_end + 3):].index(' - '))]
-                   ).lower()
+        ref_name = ''.join((pdf[:name_end] +
+                            pdf[(name_end + 3):][:(pdf[(name_end + 3):] \
+                                                   .index(' - '))]
+                           ).lower().split())
         exists = False
-        with open(bib_file, 'r') as bib:
+        with open(bib_file, 'r') as bib:  # make sure bib_file gets closed
             for line in bib:
                 if line.find(ref_name) != -1:
                     exists = True
-                    break  # make sure bib_file gets closed
+                    break 
         if exists:
             return True
     except (ValueError, IOError):
@@ -307,7 +308,7 @@ def reference_name(author, initials, year, ads_bibcode):
         if full_auth_year_page[line][:-2].decode('iso-8859-1') == ads_bibcode:
             publication_number = count
 
-    paper_name = author + year
+    paper_name = ''.join(author.lower().split()) + year
     if count > 0:
         paper_name += chr(ord('a') + publication_number)
     return paper_name
@@ -431,9 +432,8 @@ def main():
                                          out_file=bib_file)
             new_name = args.directory + '{0} - {1} - {2}.pdf' \
                         .format(paper_info[0],
-                                paper_info[1][len(paper_info[0]):],
+                           paper_info[1][len(''.join(paper_info[0].split())):],
                                 paper_info[2])
-
             print(pdf + '\n', ' -->', new_name)
             count['added'] += 1
             os.rename(pdf, new_name)

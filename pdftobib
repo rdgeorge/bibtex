@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 try:
+    import urllib
     import urllib.request as req
 except ImportError:
     import urllib2 as req
@@ -39,25 +40,27 @@ def bibtex_url(identifier):
                '&data_type=BIBTEX&db_key=AST&nocookieset=1') \
                                                 .format(identifier[1])
     elif identifier[0] == 'arxiv':
-        # Two different formats for arxiv_ids (change at 2007)
+        # Two different formats for arxiv_ids (change at 2007) + other branches
         arxiv_ads = None
-        try:
+        try:  # old
             year = int(identifier[1][identifier[1].index('/') + 1:
                        identifier[1].index('/') + 3])
             arxiv_ads = ('astro.ph' + '.' *
             (6 - len(str(int(identifier[1][11:]))))
                     + str(int(identifier[1][11:])))
-        except ValueError:
+        except ValueError:  # new
             year = int(identifier[1][:2])
             arxiv_ads = 'arxiv' + identifier[1]
         if year > 13:
             year = str(year + 1900)
         else:
             year = str(year + 2000)
+        arxiv_ads = year + arxiv_ads
+        if identifier[1][:3] == 'hep':
+           arxiv_ads = identifier[1]
         url = ('http://esoads.eso.org/cgi-bin/nph-bib_query?&bibcode={0}'
-               '&data_type=BIBTEX&db_key=AST&nocookieset=1') \
-                                                    .format(year + arxiv_ads)
-    else:
+               '&data_type=BIBTEX&db_key=AST&nocookieset=1').format(arxiv_ads)
+    else:  # ABS code
         url = ('http://esoads.eso.org/cgi-bin/nph-bib_query?&bibcode={0}'
                '&data_type=BIBTEX&db_key=AST&nocookieset=1') \
                                      .format(identifier[1].replace('&', '%26'))
@@ -423,11 +426,9 @@ def main():
         # 2 element tuple doi, arxiv, abs
         identifier = extract_info(txt)
         os.remove(txt)
-        if identifier == None:
-            print("*** Cannot process", pdf)
-            count['failed'] += 1
-            continue
         try:
+            if identifier is None:
+                raise LookupError
             paper_info = write_new_entry(identifier=identifier,
                                          out_file=bib_file)
             new_name = args.directory + '{0} - {1} - {2}.pdf' \
@@ -437,7 +438,7 @@ def main():
             print(pdf + '\n', ' -->', new_name)
             count['added'] += 1
             os.rename(pdf, new_name)
-        except LookupError:
+        except (LookupError, urllib.error.HTTPError):
             print("*** Cannot process", pdf)
             count['failed'] += 1
     print()

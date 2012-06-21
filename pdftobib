@@ -129,8 +129,13 @@ def extract_info(txt_file):
     for line in pdf_txt:
         line = line.lower()
         try:
-            return ('doi', (re.search(r'[0-9]{2}\.[0-9]{4}/.*?'
-                                      r'(?=[\ (\n)])', line).group()))
+            return ('doi', (re.search(r'[0-9]{2}'       # 2 digits
+                                      r'\.'             # .
+                                      r'[0-9]{4}'      # 4 digits
+                                      r'/'              # /
+                                      r'.*?'            # min num of anything
+                                      r'(?=[\ (\n)])',  # end at space/new line
+                                      line).group()))
         except AttributeError:
             pass
         try:
@@ -146,31 +151,46 @@ def extract_info(txt_file):
             pass
         try:
             #abs bibcode
-            bibcode = re.match(r'[0-9]{4}[a-z&]{2,6}.*[0-9]{1,4}[a-z]?.'
-                            r'*[0-9]{1,4}[a-z]\n', line).group()[:-1]
+            bibcode = re.match(r'[0-9]{4}'     # year
+                               r'[a-z&]{2,6}'  # journal
+                               r'.*'           # some number of .'s
+                               r'[0-9]{1,4}'   # volume
+                               r'[a-z]?'       # can have 'L' etc
+                               r'.*'           # some number of .'s
+                               r'[0-9]{1,4}'   # start page
+                               r'[a-z]'        # author initial
+                               r'\n',          # new line
+                               line).group()[:-1]
             return ('abs', bibcode)
         except AttributeError:
             continue
     pdf_txt.seek(0)
     # Not found, so have to construct an ABS bibcode
-    journals = {'a&a': 'aap', 'the astrophysical journal': 'apj',
-                'the astronomical journal': 'aj',
-                'mon. not. r. astron. soc.': 'mnras',
-                'the astrophysical journal supplement': 'apjs',
-                'annu. rev. astron. astrophys.': 'ara&a',
-                'annu. rev. astro. astrophys.': 'ara&a'}
+    # List so that order is preserved
+    journals = [['a&a', 'aap'],
+                ['the astronomical journal', 'aj'],
+                ['the astrophysical journal', 'apj'],
+                ['the astrophysical journal supplement', 'apjs'],
+                ['annu. rev. astron. astrophys.', 'ara&a'],
+                ['annu. rev. astro. astrophys.', 'ara&a'],
+                ['mon. not. r. astron. soc.', 'mnras'],
+               ]
     for line in pdf_txt:
         line = line.lower()
         # Look for a single line with a journal name and year
-        if (any(j in line for j in journals) and
+        if (any(j[0] in line for j in journals) and
                 re.search('[0-9]{4}', line)):
             # Journal
-            journal = [journals[j] for j in journals if j in line][0]
-            if 'the astrophysical journal supplement' in line:
-                journal = 'apjs'
+            journal = [j[1] for j in journals if j[0] in line][-1]
             # Volume and first page
-            vol_pages_re = (r'[0-9]{1,4}[:,\s]{1,4}l?[0-9]{1,4}[-––è]?l?'
-                            r'([0-9]{1,4})?')
+            vol_pages_re = (r'[0-9]{1,4}'     # volume
+                            r'[:,\s]{1,4}'    # volume-pages separator
+                            r'l?'             # if a Letter
+                            r'[0-9]{1,4}'     # start page
+                            r'([-––è]|\sy)?'  # start-end page separator
+                            r'l?'             # if a letter
+                            r'([0-9]{1,4})?'  # end page (may not exist)
+                           )
             vol_pages = re.search(vol_pages_re, line).group()
             volume = re.search(r'[0-9]{1,4}[:,\s]', vol_pages).group()[:-1]
             pages = re.sub(volume, '', vol_pages)
@@ -180,7 +200,8 @@ def extract_info(txt_file):
             page = re.search(r'[0-9]{1,4}', pages).group()
 
             # Year
-            year_line = re.sub([j for j in journals if j in line][0], '', line)
+            year_line = re.sub([j[1] for j in journals if j[0] in line][0],
+                               '', line)
             year_line = re.sub(vol_pages, '', year_line)
             year = re.search('[0-9]{4}', year_line).group()
 
@@ -195,13 +216,13 @@ def format_journal(journal):
     """
     Convert ADS journal codes into names suitable for use in references
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     journal: string
         An ADS BibTeX journal code eg '\apj'
 
-    Returns:
-    --------
+    Returns
+    -------
     string
         The formatted version of a journal name eg 'ApJ'
     """
@@ -230,13 +251,13 @@ def latex_to_text(latex):
     """
     Convert a string with latex characters to a standard character set
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     latex : string
         A string containing possible LaTeX encodings eg 'H$_{2}$O'
 
-    Returns:
-    --------
+    Returns
+    -------
     string
         A string converted to a standard format eg H20
     """
@@ -245,13 +266,15 @@ def latex_to_text(latex):
                    [[r'\times'], 'x'],
                    [[r'\alpha'], 'alpha'],
                    [[r'\beta'], 'beta'],
+                   [[r'\mu'], 'u'],
                    [[r'\gt'], '>'],
                    [[r'\lt'], '<'],
                    [[r'\~{n}', r'\~n'], 'n'],
                    [[r'\~', r'\tilde'], '~'],
                    [[r'\ndash'], '-'],
                    [[r'\&'], '&'],
-                   [[r'\"', r"\'", '{', '}', '$', '/', '^', '_', '\\'], '']
+                   [[r'\"', r"\'", "'", '`',
+                     '{', '}','$', '/', '^', '_', '\\'], '']
                   ]
     for conversion in conversions:
         for key in conversion[0]:
@@ -345,9 +368,13 @@ def write_new_entry(identifier, out_file):
     for line in range(len(bib)):
         line_list = bib[line].split()
         if line_list[0] == 'author':
-            details['author'] = re.search('(?<={{).*?(?=},)',
+            details['author'] = re.search(r'(?<={{)'  # start at {{
+                                          r'.*?'      # min num of anything
+                                          r'(?=},)',  # end at },
                                           bib[line]).group()
-            details['initials'] = re.search('(?<=}, ).*?(?=(}| and))',
+            details['initials'] = re.search(r'(?<=}, )'       # start at '}, '
+                                            r'.*?'            # min num of any
+                                            r'(?=(}| and))',  # end at } or and
                                             bib[line]).group()
             if details['initials'][:4] == 'Jr.,':
                 details['initials'] = details['initials'][4:]
@@ -449,6 +476,10 @@ def main():
         except (LookupError, urllib.error.HTTPError):
             print("*** Cannot process", pdf)
             count['failed'] += 1
+        except urllib.error.URLError:
+            print("*** ERROR: pdftobib requires an internet connection")
+            sys.exit(None)
+            
     print()
     print('Summary:')
     print(('Total PDFs: {0}\nAlready included in {bib}: {1}\n'

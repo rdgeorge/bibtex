@@ -18,6 +18,8 @@ try:
 except ImportError:
     import urllib2 as req
     import codecs
+    reload(sys)  # Hack to put setdefaultencoding back in after python startup
+    sys.setdefaultencoding('utf-8')  # Output utf-8 to teminal
 
 
 def bibtex_url(identifier):
@@ -88,15 +90,16 @@ def exists_in_bib(pdf, bib_file):
     except ValueError:
         pass
     try:
-        name_end = pdf.index(' - ')
-        ref_name = ''.join((pdf[:name_end] +
-                            pdf[(name_end + 3):][:(pdf[(name_end + 3):] \
-                                                   .index(' - '))]
-                           ).lower().split())
+        bibcode = pdf.split()[2]
+        #name_end = pdf.index(' - ')
+        #ref_name = ''.join((pdf[:name_end] +
+        #                    pdf[(name_end + 3):][:(pdf[(name_end + 3):] \
+        #                                           .index(' - '))]
+        #                   ).lower().split())
         exists = False
         with open(bib_file, 'r') as bib:  # make sure bib_file gets closed
             for line in bib:
-                if line.find(ref_name) != -1:
+                if line.find(bibcode) != -1:
                     exists = True
                     break 
         if exists:
@@ -240,14 +243,14 @@ def latex_to_text(latex):
     string
         A string converted to a standard format eg H20
     """
-    # Set out a list of conversions (list preserves order)
-    conversions = [[[r'\ss'], 'ss'],
+    # Set out a list of conversions (list preserves order - needed for \ etc)
+    conversions = [[[r'\ss'], 'ß'],
                    [[r'\times'], 'x'],
-                   [[r'\alpha'], 'alpha'],
-                   [[r'\beta'], 'beta'],
+                   [[r'\alpha'], 'α'],
+                   [[r'\beta'], 'β'],
                    [[r'\gt'], '>'],
                    [[r'\lt'], '<'],
-                   [[r'\~{n}', r'\~n'], 'n'],
+                   [[r'\~{n}', r'\~n'], 'ñ'],
                    [[r'\~', r'\tilde'], '~'],
                    [[r'\ndash'], '-'],
                    [[r'\&'], '&'],
@@ -327,7 +330,7 @@ def write_new_entry(identifier, out_file):
     identifier : 2 element tuple (identifier type, value)
         Identifier type can be {'doi', arxiv', 'abs'}
     out_file : string
-        The file to write to, e.g. 'library.bib'
+        The file to write to, e.g. 'articles.bib'
 
     Returns:
     --------
@@ -382,15 +385,19 @@ def write_new_entry(identifier, out_file):
 
     # Look up best name to use for reference (need to determine letter on end)
     try:
-        ref_name = reference_name(details['author'], details['initials'],
-                                  details['year'], details['ads_bibcode'])
-        bib[0] = bib[0][:bib[0].find('{') + 1].lower() + ref_name + ',\n'
+        #ref_name = reference_name(details['author'], details['initials'],
+        #                          details['year'], details['ads_bibcode'])
+        bib[0] = ''.join([bib[0][:bib[0].find('{') + 1].lower(),
+                          details['ads_bibcode'], ',\n'         ])
 
         with open(out_file, 'a') as bib_file:
             for line in bib:
                 bib_file.write(line)
             bib_file.write('\n')
-        return (details['author'], ref_name, details['title'])
+        #return (details['author'], details['year'], ref_name, details['title'])
+        return "{author} - {year} - {bibcode} - {title}".format(
+                author=details['author'], year=details['year'],
+                bibcode=details['ads_bibcode'], title=details['title'])
     except UnboundLocalError:  # Paper has no ADS bibcode
         raise LookupError
 
@@ -408,11 +415,12 @@ def main():
     parser.add_argument("bibtex_file", type=str, nargs='?',
                         default="articles.bib",
                         help=("The .bib file to append bibtex entries to,"
-                              " the full path can be specified, if not the file"
-                              " will be created in the pdf directory"
-                              " (default: articles.bib)"))
+                              " the full path can be specified, if not the
+                              " file will be created in the pdf directory"
+                              " (default: articles.bib)"                  ))
     args = parser.parse_args()
 
+    # Format paths to args.directory and bib_file correctly
     if args.directory[-1] != '/':
         args.directory += '/'
     txt = args.directory + 'pdf.txt'
@@ -421,28 +429,33 @@ def main():
         bib_file = args.directory + args.bibtex_file
     else:
         bib_file = args.bibtex_file
-
+        
+    # Parse pdfs and write to bibtex_file
     count = {'total': 0, 'already_included': 0, 'added': 0, 'failed': 0}
     for pdf in glob.glob(args.directory + '*.pdf'):
         count['total'] += 1
+        # Skip if pdf is already included in bib_file
         if exists_in_bib(pdf=pdf, bib_file=bib_file) == True:
             print('*** Already in ' + bib_file + ':', pdf)
             count['already_included'] += 1
             continue
-        subprocess.call(['pdftotext', '-l', '1', pdf, txt], shell=False,
-                        stderr=subprocess.PIPE)
+        # Extract identifiying information from the first page of the pdf
+        subprocess.call(['pdftotext', '-l', '1', pdf, txt],
+                        shell=False, stderr=subprocess.PIPE)
         # 2 element tuple doi, arxiv, abs
         identifier = extract_info(txt)
         os.remove(txt)
         try:
             if identifier is None:
                 raise LookupError
-            paper_info = write_new_entry(identifier=identifier,
-                                         out_file=bib_file)
-            new_name = args.directory + '{0} - {1} - {2}.pdf' \
-                        .format(paper_info[0],
-                           paper_info[1][len(''.join(paper_info[0].split())):],
-                                paper_info[2])
+            # Write bibtex for paper to bib_file
+            new_name = write_new_entry(identifier=identifier,
+                                         out_file=bib_file   )
+            # Rename the pdf
+            #new_name = args.directory + '{0} - {1} - {2}.pdf' \
+            #            .format(paper_info[0],
+            #               paper_info[1][len(''.join(paper_info[0].split())):],
+            #                    paper_info[2])
             print(pdf + '\n', ' -->', new_name)
             count['added'] += 1
             os.rename(pdf, new_name)
@@ -450,13 +463,14 @@ def main():
             print("*** Cannot process", pdf)
             count['failed'] += 1
     print()
+    # Print a summary of the operation
     print('Summary:')
     print(('Total PDFs: {0}\nAlready included in {bib}: {1}\n'
            'Added to {bib}: {2}\nFailed: {3}').format(count['total'],
-                                                     count['already_included'],
+                                                count['already_included'],
                                                       count['added'],
                                                       count['failed'],
-                                                      bib=bib_file))
+                                                      bib=bib_file        ))
 
 
 if __name__ == '__main__':

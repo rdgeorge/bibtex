@@ -22,6 +22,47 @@ except ImportError:
     sys.setdefaultencoding('utf-8')  # Output utf-8 to teminal
 
 
+class BibtexFile:
+
+    def __init__(self, path=''):
+        self.path = path
+        self.entries = []
+        self.fill_entries()
+
+    def __contains__(self, item):
+        #return item in self.entries
+        return repr(item) in self.entries
+
+    def append(self, item):
+        pass
+
+    def fill_entries(self):
+        pass
+
+    def write_to_file(self):
+        #self.entries.sort()
+        pass
+
+
+class Article:
+
+    def __init__(self, path=''):
+        self.path = path
+        self.bibcode = ''
+
+    def __repr__(self):
+        return self.bibcode
+
+    def extract_info(self):
+        pass
+
+    def ads_url(self):
+        pass
+
+    def get_bibtex(self):
+        pass
+
+
 def bibtex_url(identifier, ads_mirror):
     """
     Return a URL of a BibTeX entry for the paper
@@ -101,7 +142,7 @@ def exists_in_bib(pdf, bib_file):
             for line in bib:
                 if line.find(bibcode) != -1:
                     exists = True
-                    break 
+                    break
         if exists:
             return True
     except (ValueError, IOError):
@@ -460,7 +501,7 @@ def main():
         bib_file = args.directory + args.bibtex_file
     else:
         bib_file = args.bibtex_file
-        
+
     # Parse pdfs and write to bibtex_file
     ads_mirror = 'esoads.eso.org'
     count = {'total': 0, 'already_included': 0, 'added': 0, 'failed': 0}
@@ -497,7 +538,7 @@ def main():
         except urllib.error.URLError:
             print("*** ERROR: pdftobib requires an internet connection")
             sys.exit(None)
-            
+
     print()
     # Print a summary of the operation
     print('Summary:')

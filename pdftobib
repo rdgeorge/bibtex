@@ -15,7 +15,9 @@ import sys
 try:
     import urllib
     import urllib.request as req
+    from urllib.parse import quote
 except ImportError:
+    from urllib import quote
     import urllib2 as req
     import codecs
     reload(sys)  # Hack to put setdefaultencoding back in after python startup
@@ -46,68 +48,243 @@ class BibtexFile:
 
 class Article:
 
-    def __init__(self, path=''):
+    def __init__(self, path=None):
         self.path = path
-        self.bibcode = ''
+        self.bibcode = None
+        self.bibtex = None
+        self.url = None
+        self.identifier = None
+        self.identifier_type = None
+        if path is not None:
+            self.extract_info()
+            self.create_url()
+            self.get_bibtex()
 
     def __repr__(self):
         return self.bibcode
 
     def extract_info(self):
-        pass
+        """
+        Extract identifying information from a text file converted from a pdf
 
-    def ads_url(self):
-        pass
+        Parameters:
+        -----------
+        txt_file: string
+            The path to a text file to extract information from
 
-    def get_bibtex(self):
-        pass
-
-
-def bibtex_url(identifier, ads_mirror):
-    """
-    Return a URL of a BibTeX entry for the paper
-
-    Parameters:
-    -----------
-    identifier: 2 element tuple, (identifier type, value)
-        identifier type can be {'doi', arxiv', 'abs'}
-
-    Returns:
-    --------
-    string
-        A URL that can be resolved to find a BibTeX entry
-    """
-    if identifier[0] == 'doi':
-
-        url = ('http://' + ads_mirror + '/cgi-bin/nph-bib_query?&doi={0}'
-               '&data_type=BIBTEX&db_key=AST&nocookieset=1') \
-                                                .format(identifier[1])
-    elif identifier[0] == 'arxiv':
-        # Two different formats for arxiv_ids (change at 2007) + other branches
-        arxiv_ads = None
-        try:  # old
-            year = int(identifier[1][identifier[1].index('/') + 1:
-                       identifier[1].index('/') + 3])
-            arxiv_ads = ('astro.ph' + '.' *
-            (6 - len(str(int(identifier[1][11:]))))
-                    + str(int(identifier[1][11:])))
-        except ValueError:  # new
-            year = int(identifier[1][:2])
-            arxiv_ads = 'arxiv' + identifier[1]
-        if year > 13:
-            year = str(year + 1900)
+        Returns:
+        --------
+        tuple: 2 elements, (identifier type, value)
+            identifier type can be {'doi', arxiv', 'abs'}
+        """
+        if sys.version_info[0] < 3:
+            pdf_txt = codecs.open(self.path, 'r', 'utf-8')
         else:
-            year = str(year + 2000)
-        arxiv_ads = year + arxiv_ads
-        if identifier[1][:3] == 'hep':
-           arxiv_ads = identifier[1]
-        url = ('http://' + ads_mirror + '/cgi-bin/nph-bib_query?&bibcode={0}'
-               '&data_type=BIBTEX&db_key=AST&nocookieset=1').format(arxiv_ads)
-    else:  # ABS code
-        url = ('http://' + ads_mirror + '/cgi-bin/nph-bib_query?&bibcode={0}'
-               '&data_type=BIBTEX&db_key=AST&nocookieset=1') \
-                                     .format(identifier[1].replace('&', '%26'))
-    return url
+            pdf_txt = open(self.path, 'r')
+        # First search for DOI and ABS/arXiv bibcode by regex
+        bibcode = None
+        for line in pdf_txt:
+            line = line.lower()
+            try:
+                self.identifier_type = 'doi'
+                self.identifier = re.search(
+                                    r'[0-9]{2}'       # 2 digits
+                                    r'\.'             # .
+                                    r'[0-9]{4}'       # 4 digits
+                                    r'/'              # /
+                                    r'.*?'            # min num of anything
+                                    r'(?=[\ (\n)])',  # end at space/newline
+                                    line            ).group()
+                return
+            except AttributeError:
+                pass
+            try:
+                #arxiv bibcode
+                bibcode = line.index('arxiv')
+                if line[bibcode + 5] == ')':
+                    continue
+                bibcode = line.split()[0][6:]
+                if bibcode[-2] == 'v':
+                    bibcode = bibcode[:-2]
+                self.identifier_type = 'arxiv'
+                self.identifier = bibcode
+                return
+            except ValueError:
+                pass
+            try:
+                #abs bibcode
+                self.identifier_type = 'abs'
+                self.identifier = re.match(
+                                    r'[0-9]{4}'     # year
+                                    r'[a-z&]{2,6}'  # journal
+                                    r'.*'           # some number of .'s
+                                    r'[0-9]{1,4}'   # volume
+                                    r'[a-z]?'       # can have 'L' etc
+                                    r'.*'           # some number of .'s
+                                    r'[0-9]{1,4}'   # start page
+                                    r'[a-z]'        # author initial
+                                    r'\n',          # new line
+                                    line          ).group()[:-1]
+                return
+            except AttributeError:
+                continue
+        pdf_txt.seek(0)
+        # Not found, so have to construct an ABS bibcode
+        # List so that order is preserved (for apjs)
+        journals = [['a&a', 'aap'],
+                    ['the astronomical journal', 'aj'],
+                    ['the astrophysical journal', 'apj'],
+                    ['the astrophysical journal supplement', 'apjs'],
+                    ['annu. rev. astron. astrophys.', 'ara&a'],
+                    ['annu. rev. astro. astrophys.', 'ara&a'],
+                    ['mon. not. r. astron. soc.', 'mnras'],
+                   ]
+        for line in pdf_txt:
+            line = line.lower()
+            # Look for a single line with a journal name and year
+            if (any(j[0] in line for j in journals) and
+                    re.search('[0-9]{4}', line)):
+                # Journal
+                journal = [j[1] for j in journals if j[0] in line][-1]
+                # Volume and first page
+                vol_pages_re = (r'[0-9]{1,4}'     # volume
+                                r'[:,\s]{1,4}'    # volume-pages separator
+                                r'l?'             # if a Letter
+                                r'[0-9]{1,4}'     # start page
+                                r'([-––è]|\sy)?'  # start-end page separator
+                                r'l?'             # if a letter
+                                r'([0-9]{1,4})?'  # end page (may not exist)
+                               )
+                vol_pages = re.search(vol_pages_re, line).group()
+                volume = re.search(r'[0-9]{1,4}[:,\s]', vol_pages).group()[:-1]
+                pages = re.sub(volume, '', vol_pages)
+                qualifier = '.'
+                if re.search('l', pages):
+                    qualifier = 'l'
+                page = re.search(r'[0-9]{1,4}', pages).group()
+
+                # Year
+                year_line = re.sub([j[1] for j in journals if j[0] in line][0],
+                                   '', line)
+                year_line = re.sub(vol_pages, '', year_line)
+                year = re.search('[0-9]{4}', year_line).group()
+
+                # Construct bibcode from parts derived above
+                self.identifier_type = 'abs'
+                self.identifier = ''.join([year, journal,
+                                           '.' * (9 - len(journal)
+                                                    - len(volume) ),
+                                           volume, qualifier,
+                                           '.' * (4 - len(page)), page])
+                return
+
+    def create_url(self, ads_mirror):
+        """
+        Get a URL of a BibTeX entry for the paper
+
+        Parameters:
+        -----------
+        identifier: 2 element tuple, (identifier type, value)
+            identifier type can be {'doi', arxiv', 'abs'}
+
+        Returns:
+        --------
+        string
+            A URL that can be resolved to find a BibTeX entry
+        """
+        if self.identifier_type is 'doi':
+            self.url = ''.join(['http://', ads_mirror,
+                                '/cgi-bin/nph-bib_query?'
+                                '&doi={0}'.format(self.identifier),
+                                '&data_type=BIBTEX&db_key=AST&nocookieset=1'])
+        elif self.identifier_type is 'arxiv':
+            # Two different formats for arxiv_ids (change at 2007)
+            # Paper may also have been submitted to another branch e.g. hep
+            arxiv_ads = None
+            try:  # old
+                year = int(self.identifier[self.identifier.index('/') + 1:
+                                           self.identifier.index('/') + 3 ])
+                arxiv_ads = ''.join(['astro.ph',
+                    '.' * (6 - len(str(int(self.identifier[11:])))),
+                                     str(int(self.identifier[11:])) ])
+            except ValueError:  # new
+                year = int(self.identifier[:2])
+                arxiv_ads = 'arxiv' + self.identifier
+            if year > 13:
+                year = str(year + 1900)
+            else:
+                year = str(year + 2000)
+            arxiv_ads = year + arxiv_ads
+            if self.identifier == 'hep':
+               arxiv_ads = self.identifier
+            self.url = ''.join(['http://', ads_mirror,
+                                '/cgi-bin/nph-bib_query?',
+                                '&bibcode={0}'.format(arxiv_ads),
+                                '&data_type=BIBTEX&db_key=AST&nocookieset=1'])
+        else:  # ABS code
+            self.url = ''.join(['http://', ads_mirror,
+                                '/cgi-bin/nph-bib_query?',
+                                '&bibcode={0}'.format(quote(self.identifier)),
+                                '&data_type=BIBTEX&db_key=AST&nocookieset=1' ])
+        return
+
+    def get_bibtex(self, ads_mirror):
+        full_bibtex_page = req.urlopen(self.url).readlines()
+
+        bib = []
+        for line in full_bibtex_page[5:-1]:
+            bib.append(line.decode('iso-8859-1'))
+
+        self.bibtex = {}
+        # Need to parse bibtex entry and make necessary changes
+        for line in range(len(bib)):
+            line_list = bib[line].lower().split()
+            if line_list[:9] == '@article{':
+                self.bibcode = line_list[9:-1]
+                self.bibtex['bibcode'] = self.bibcode
+            if line_list[0] == 'author':
+                self.bibtex['author'] = []
+                bib[line] = bib[line][10:]
+                for author_line in range(line, len(bib)):
+                    if (bib[author_line] in ['\n', '}\n'] or
+                            bib[author_line].lower().split()[1] is '='):
+                        break
+                    for author in author_line.lower().split('and'):
+                        if author == '\n':
+                            continue
+                        count = 0
+                        name = ''
+                        initials = ''
+                        initial_list = []
+                        for character in author:
+                            if character == '{':
+                                count += 1
+                            elif character == '}':
+                                count -= 1
+                            if count > 0:
+                                name += character
+                            else:
+                                initials += character
+                        for element in initials.split('.'):
+                            for character in element:
+                                if character.isalpha():
+                                    initial_list.append(character)
+                        self.authors.append(latex_to_text(name[1:]),
+                                           tuple(initial_list)     )
+                self.author = self.authors[0][0]
+            elif line_list[0] == 'year':
+                self.bibtex['year'] = line_list[2][:-1]
+            elif line_list[0] == 'journal':
+                self.bibtex['journal']= format_journal(' '.join(line_list[2:]))
+            elif line_list[0] == 'adsurl':
+                self.url = os.path.split(line_list[2][1:-2])[-1]
+                self.url = self.url.replace(ads_mirror, 'adsabs.harvard.edu')
+                self.bibtex['url'] = self.url
+            elif line_list[0] == 'doi':
+                self.doi = line_list[2][1:-2]
+                self.bibtex['doi'] = self.doi
+            elif line_list[0] == 'title':
+                self.title = latex_to_text(bib[line][14:-4])
 
 
 def exists_in_bib(pdf, bib_file):
@@ -148,112 +325,6 @@ def exists_in_bib(pdf, bib_file):
     except (ValueError, IOError):
         pass
     return False
-
-
-def extract_info(txt_file):
-    """
-    Extract identifying information from a text file converted from a pdf
-
-    Parameters:
-    -----------
-    txt_file: string
-        The path to a text file to extract information from
-
-    Returns:
-    --------
-    tuple: 2 elements, (identifier type, value)
-        identifier type can be {'doi', arxiv', 'abs'}
-    """
-    if sys.version_info[0] < 3:
-        pdf_txt = codecs.open(txt_file, 'r', 'utf-8')
-    else:
-        pdf_txt = open(txt_file, 'r')
-    # First search for DOI and ABS/arXiv bibcode by regex
-    bibcode = None
-    for line in pdf_txt:
-        line = line.lower()
-        try:
-            return ('doi', (re.search(r'[0-9]{2}'       # 2 digits
-                                      r'\.'             # .
-                                      r'[0-9]{4}'      # 4 digits
-                                      r'/'              # /
-                                      r'.*?'            # min num of anything
-                                      r'(?=[\ (\n)])',  # end at space/new line
-                                      line).group()))
-        except AttributeError:
-            pass
-        try:
-            #arxiv bibcode
-            bibcode = line.index('arxiv')
-            if line[bibcode + 5] == ')':
-                continue
-            bibcode = line.split()[0][6:]
-            if bibcode[-2] == 'v':
-                bibcode = bibcode[:-2]
-            return ('arxiv', bibcode)
-        except ValueError:
-            pass
-        try:
-            #abs bibcode
-            bibcode = re.match(r'[0-9]{4}'     # year
-                               r'[a-z&]{2,6}'  # journal
-                               r'.*'           # some number of .'s
-                               r'[0-9]{1,4}'   # volume
-                               r'[a-z]?'       # can have 'L' etc
-                               r'.*'           # some number of .'s
-                               r'[0-9]{1,4}'   # start page
-                               r'[a-z]'        # author initial
-                               r'\n',          # new line
-                               line).group()[:-1]
-            return ('abs', bibcode)
-        except AttributeError:
-            continue
-    pdf_txt.seek(0)
-    # Not found, so have to construct an ABS bibcode
-    # List so that order is preserved
-    journals = [['a&a', 'aap'],
-                ['the astronomical journal', 'aj'],
-                ['the astrophysical journal', 'apj'],
-                ['the astrophysical journal supplement', 'apjs'],
-                ['annu. rev. astron. astrophys.', 'ara&a'],
-                ['annu. rev. astro. astrophys.', 'ara&a'],
-                ['mon. not. r. astron. soc.', 'mnras'],
-               ]
-    for line in pdf_txt:
-        line = line.lower()
-        # Look for a single line with a journal name and year
-        if (any(j[0] in line for j in journals) and
-                re.search('[0-9]{4}', line)):
-            # Journal
-            journal = [j[1] for j in journals if j[0] in line][-1]
-            # Volume and first page
-            vol_pages_re = (r'[0-9]{1,4}'     # volume
-                            r'[:,\s]{1,4}'    # volume-pages separator
-                            r'l?'             # if a Letter
-                            r'[0-9]{1,4}'     # start page
-                            r'([-––è]|\sy)?'  # start-end page separator
-                            r'l?'             # if a letter
-                            r'([0-9]{1,4})?'  # end page (may not exist)
-                           )
-            vol_pages = re.search(vol_pages_re, line).group()
-            volume = re.search(r'[0-9]{1,4}[:,\s]', vol_pages).group()[:-1]
-            pages = re.sub(volume, '', vol_pages)
-            qualifier = '.'
-            if re.search('l', pages):
-                qualifier = 'l'
-            page = re.search(r'[0-9]{1,4}', pages).group()
-
-            # Year
-            year_line = re.sub([j[1] for j in journals if j[0] in line][0],
-                               '', line)
-            year_line = re.sub(vol_pages, '', year_line)
-            year = re.search('[0-9]{4}', year_line).group()
-
-            # Construct bibcode from parts derived above
-            bibcode = str(year + journal +
-                              '.' * (9 - len(journal) - len(volume)) + volume
-                               + qualifier + '.' * (4 - len(page)) + page)
-            return ('abs', bibcode)
 
 
 def format_journal(journal):
@@ -487,7 +558,7 @@ def main():
     parser.add_argument("bibtex_file", type=str, nargs='?',
                         default="articles.bib",
                         help=("The .bib file to append bibtex entries to,"
-                              " the full path can be specified, if not the
+                              " the full path can be specified, if not the"
                               " file will be created in the pdf directory"
                               " (default: articles.bib)"                  ))
     args = parser.parse_args()

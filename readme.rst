@@ -67,5 +67,6 @@ This is specifically targeted at astrophysics papers.
 ``doi`` and ``url`` fields are returned with each bibtex entry, allowing for
 hyperlinking using ``abbrvnatR.bst``.
 
-Usage is:
-pdftobib [DIRECTORY (default: .)] [--bibtex_file FILE (default: articles.bib)]
+Usage is::
+    
+    pdftobib [DIRECTORY (default: .)] [--bibtex_file FILE (default: articles.bib)]

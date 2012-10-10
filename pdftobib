@@ -228,12 +228,16 @@ class Article:
                                 '&data_type=BIBTEX&db_key=AST&nocookieset=1' ])
         return
 
+
     def get_bibtex(self, ads_mirror):
         full_bibtex_page = req.urlopen(self.url).readlines()
 
-        bib = []
+        bib_list = []
         for line in full_bibtex_page[5:-1]:
-            bib.append(line.decode('iso-8859-1'))
+            bib_list.append(line.decode('iso-8859-1'))
+
+        bib_dict = parse_bibtex(bib_list)
+        print(bib_dict)
 
         self.bibtex = {}
         # Need to parse bibtex entry and make necessary changes
@@ -285,6 +289,32 @@ class Article:
                 self.bibtex['doi'] = self.doi
             elif line_list[0] == 'title':
                 self.title = latex_to_text(bib[line][14:-4])
+
+
+def parse_bibtex_entry(bib_list):
+
+    bib_dict = {}
+    last_key = None
+    for line in bib_list:
+        line_list = line.split()
+        try:
+            if line_list[1] == '=':
+                bib_dict[line_list[0]] = ' '.join(line_list[2:])
+                last_key = line_list[0]
+            else:
+                bib_dict[last_key] += line
+    # All bibtex keys are now dictionary keys
+    # Need to remove { " , from beginning/end of bib_dict values
+    for key in bib_dict:
+        if bib_dict[key][-1] == ',':
+            bib_dict[key] = bib_dict[key][:-1]
+        while:
+            if bib_dict[key][0] in ['{', '"']
+                    and bib_dict[key][-1] in ['{', '"']:
+                bib_dict[key] = bib_dict[key][1:-1]
+            else:
+                break
+    return bib_dict
 
 
 def exists_in_bib(pdf, bib_file):

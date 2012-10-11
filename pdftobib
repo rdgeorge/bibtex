@@ -239,8 +239,7 @@ class Article:
                 return identifier, identifier_type
             except AttributeError:
                 continue
-        #pdf_txt.seek(0)  # Return to start of file
-        
+
         # Not found, so have to construct an ABS bibcode
         # List so that order is preserved (for apjs)
         journals = [['a&a', 'aap'],
@@ -309,22 +308,29 @@ class Article:
             # Two different formats for arxiv_ids (change at 2007)
             # Paper may also have been submitted to another branch e.g. hep
             arxiv_ads = None
-            try:  # old
+            try:  # old {year}astro.ph..9601  2004hep.ph....4175
+                arxiv_section = 'astro.ph'
+                if self.identifier[:3] == 'hep':
+                    arxiv_section = 'hep.ph'
+                # Month and submission number
+                arxiv_ads = str(int(self.identifier[-5:]))
+                # Total length is 14 (18 with year)
+                arxiv_ads = ''.join([arxiv_section,
+                                     '.' * (14 - len(arxiv_section)
+                                            - len(arxiv_ads)       ),
+                                     arxiv_ads                       ])
+                # Needs to be int for processing later
                 year = int(self.identifier[self.identifier.index('/') + 1:
                                            self.identifier.index('/') + 3 ])
-                arxiv_ads = ''.join(['astro.ph',
-                    '.' * (6 - len(str(int(self.identifier[11:])))),
-                                     str(int(self.identifier[11:])) ])
-            except ValueError:  # new
+            except ValueError:  # new {year}arxiv{identifier}
+                # self.identifier in form 1201.4773v1
                 year = int(self.identifier[:2])
                 arxiv_ads = 'arxiv' + self.identifier
-            if year > 13:
+            if year > 14:  # I don't like this
                 year = str(year + 1900)
             else:
                 year = str(year + 2000)
             arxiv_ads = year + arxiv_ads
-            if self.identifier == 'hep':
-               arxiv_ads = self.identifier
             url = ''.join(['http://', self.ads_mirror,
                            '/cgi-bin/nph-bib_query?',
                            '&bibcode={0}'.format(arxiv_ads),
@@ -365,22 +371,25 @@ class Article:
         self.bibtex = parse_bibtex_entry(bibtex)
 
         # Fill member variables from this dictionary
-        self.author    = self.bibtex['author'][0][0]
-        self.authors   = self.bibtex['author']
+        self.author      = self.bibtex['author'][0][0]
+        self.authors     = self.bibtex['author']
         try:
-            self.doi       = self.bibtex['doi']
+            self.doi     = self.bibtex['doi']
         except KeyError:  # arXiv papers may not have DOIs yet
             pass
-        self.journal   = self.bibtex['journal'] = \
+        try:
+            self.journal = self.bibtex['journal'] = \
                                         format_journal(self.bibtex['journal'])
-        self.reference = self.bibtex['reference']
-        self.title     = self.bibtex['title']
-        self.type      = self.bibtex['type']
+        except KeyError:  # Some conference proceedings do not have journals
+            self.journal = self.bibtex['series']
+        self.reference   = self.bibtex['reference']
+        self.title       = self.bibtex['title']
+        self.type        = self.bibtex['type']
         # Replace ADS mirror with main page for inclusion in bibtex file
-        self.url       = self.bibtex['url'] = self.bibtex['adsurl'] = \
+        self.url         = self.bibtex['url'] = self.bibtex['adsurl'] = \
                             self.bibtex['adsurl'].replace(self.ads_mirror,
                                                           'adsabs.harvard.edu')
-        self.year      = self.bibtex['year']
+        self.year        = self.bibtex['year']
         
         # These were just to fill the member variables (not wanted in bibtex)
         for key in ('reference', 'type'):
@@ -393,17 +402,16 @@ class Article:
         
         Authur - Year - ADS bibcode - Title.pdf
         """
-    
         print(self.path)
         print(''.join(['  --> ', os.path.split(self.path)[0], '/', 
                        ' - '.join([latex_to_text(self.author),
                                    self.reference,
                                    latex_to_text(self.title)]), '.pdf', '\n']))
         os.rename(self.path, ''.join([os.path.split(self.path)[0], '/',
-                                    ' - '.join([latex_to_text(self.author),
-                                                self.reference,
-                                                latex_to_text(self.title)  ]),
-                                      '.pdf'                                  )
+                                  ' - '.join([latex_to_text(self.author),
+                                              self.reference,
+                                              latex_to_text(self.title)  ]),
+                                      '.pdf'                                ]))
         
 
 def parse_bibtex_entry(bib_list):
@@ -415,12 +423,15 @@ def parse_bibtex_entry(bib_list):
     bib_list : list of strings
         The bibtex entry to parse
         
-    
+    Returns
+    -------
+    dictionary
+        A dictionary of bibtex key : value pairs    
     """
     bib_dict = {}
     last_key = None
     for line in bib_list:
-        line_list = line.strip().split()
+        line_list = line.split()
         try:
             if line_list[1] == '=':  # If the start of key = value pair
                 bib_dict[line_list[0]] = line_list[2:]
@@ -461,10 +472,13 @@ def parse_bibtex_entry(bib_list):
                     count += 1
                 elif character == '}':
                     count -= 1
-            if ((bib_dict[key][0] == '"' and bib_dict[key][-1] == '"') or
-                len_greater_than_0 == (len(bib_dict[key]) - 1)           ):
-                bib_dict[key] = bib_dict[key][1:-1]
-            else:
+            try:
+                if ((bib_dict[key][0] == '"' and bib_dict[key][-1] == '"') or
+                    len_greater_than_0 == (len(bib_dict[key]) - 1)           ):
+                    bib_dict[key] = bib_dict[key][1:-1]
+                else:
+                    raise IndexError
+            except IndexError:
                 break
 
     # Now parse authors into a tuple of tuples
@@ -604,7 +618,9 @@ def main():
     # Parse pdfs and write to bibtex_file
     ads_mirror = 'esoads.eso.org'
     count = {'total': 0, 'already_included': 0, 'added': 0, 'failed': 0}
-    for pdf_path in glob.glob(args.directory + '*.pdf'):
+    pdf_paths = glob.glob(args.directory + '*.pdf')
+    pdf_paths.sort()
+    for pdf_path in pdf_paths:
         count['total'] += 1
         # Skip if pdf is already included in bib_file
         try:

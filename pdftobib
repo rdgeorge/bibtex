@@ -26,76 +26,188 @@ except ImportError:
 
 class BibtexFile:
 
-    def __init__(self, path=''):
+    def __init__(self, path=None):
+        """
+        Constructor, optionally imports from a specified bibtex file
+        
+        Parameters
+        ----------
+        path : string, optional
+            The path to a bibtex file to import (default: None = self.path)
+        """
         self.path = path
-        self.entries = []
-        self.fill_entries()
+        self.articles = []  # List of Articles
+        if os.path.isfile(path):
+            self.import_articles_from_file()
 
     def __contains__(self, item):
-        #return item in self.entries
-        return repr(item) in self.entries
+        """
+        Returns item (a reference) in the list of article references in self
+        """
+        return repr(item) in [repr(article.reference)
+                              for article in self.articles]
+
 
     def append(self, item):
-        pass
+        """
+        Append an Article to the BibtexFile
+        
+        Parameters
+        ----------
+        item : Article
+            The Article to append
+        """
+        if type(item) is Article:
+            self.articles.append(item)
+        else:
+            raise TypeError
 
-    def fill_entries(self):
-        pass
+
+    def import_articles_from_file(self, path=None):
+        """
+        Import a bibtex file and create an Article for each entry
+        
+        Parameters
+        ----------
+        path : string, optional
+            The path to a bibtex file to import (default: None = self.path)
+        """
+        if path is None:
+            path = self.path
+        # Get all lines from file
+        with open(path, 'r') as bib_file:
+            lines = bib_file.readlines()
+        count = 0
+        bibtex = []
+        new_article = False
+        for line in lines:
+            # Find lines to use for single entry
+            for character in line.strip():
+                if character == '{':
+                    new_article = True
+                    count += 1
+                elif character == '}':
+                    count -= 1
+            # Add line to this entry
+            if line != '\n':
+                bibtex.append(line)
+            # Entry over, construct Article and append to self.articles
+            if count < 1 and new_article:
+                self.articles.append(Article(bibtex=bibtex))
+                bibtex = []
+                new_article = False
+
 
     def write_to_file(self):
-        #self.entries.sort()
-        pass
-
+        """
+        Write a bibtex entry for all Articles to the file
+        """
+        # Sort by author, year
+        self.articles.sort(key=lambda article: (article.author, article.year))
+        with open(self.path, 'w') as bib_file:
+            for article in self.articles:
+                # Write first line of bibtex (@article{reference, etc)
+                bib_file.write('@{0}{{{1},\n'.format(article.type,
+                                                     article.reference))
+                # Author list needs some special formatting
+                authors = []
+                for author in article.authors:
+                    formatted_author = ['{', author[0], '}']
+                    try:
+                        formatted_author += [', ', author[1], '.']
+                        for initial in author[2:]:
+                            formatted_author += ['~', initial, '.']
+                    except IndexError:
+                        pass
+                    authors.append(''.join(formatted_author))
+                bib_file.write('author = {' + ' and '.join(authors) + '},\n')
+                
+                # Write other keys
+                for key in article.bibtex:
+                    if key != 'author':
+                        bib_file.write(''.join([key, ' = {',
+                                                article.bibtex[key], '},\n']))
+                bib_file.write('}\n\n')
+                
 
 class Article:
 
-    def __init__(self, path=None):
+    def __init__(self, path=None, bibtex=None):
+        """
+        Constructor, takes optional path to pdf or bibtex (list of strings) 
+        
+        Parameters
+        ----------
+        path : string, optional
+            A path to a pdf to parse and retrieve bibtex from ADS
+        bibtex : list of strings, optional
+            A list containing a bibtex entry for an article
+        """
         self.path = path
-        self.bibcode = None
-        self.bibtex = None
-        self.url = None
-        self.identifier = None
-        self.identifier_type = None
+        # ADS mirror to query (to take load off adsabs.harvard.edu)
+        self.ads_mirror = 'esoads.eso.org'
+        
+        # If a pdf has been given
         if path is not None:
-            self.extract_info()
-            self.create_url()
-            self.get_bibtex()
+            # Extract identifying information from the pdf
+            self.identifier, self.identifier_type = \
+                                             self.identifier_from_article()
+            # Construct a url linking to the article bibtex entry at ADS
+            self.url = self.bibtex_url()
+            # Parse the bibtex entry
+            self.import_from_bibtex_url()
+            # Rename the file in the pattern
+            # author - year - ads_bibcode - title.pdf
+            self.rename_file()
+            
+        # If a list of strings containing a bibtex entry has been given
+        if bibtex is not None:
+            self.import_from_bibtex(bibtex)
+
 
     def __repr__(self):
-        return self.bibcode
+        """
+        Return the ads bibcode (a unique identifier of the article)
+        """
+        return self.reference
 
-    def extract_info(self):
+
+    def identifier_from_article(self):
         """
         Extract identifying information from a text file converted from a pdf
+        
+        Long method with lots of regex magic
 
-        Parameters:
-        -----------
-        txt_file: string
-            The path to a text file to extract information from
-
-        Returns:
-        --------
-        tuple: 2 elements, (identifier type, value)
+        Returns
+        -------
+        tuple: 2 elements, (identifier, identifier type)
             identifier type can be {'doi', arxiv', 'abs'}
         """
+        # Convert the first page of the pdf to text so it can be parsed
+        txt = 'pdf.txt'
+        subprocess.call(['pdftotext', '-l', '1', self.path, txt],
+                        shell=False, stderr=subprocess.PIPE)
+        # Read the text file
         if sys.version_info[0] < 3:
-            pdf_txt = codecs.open(self.path, 'r', 'utf-8')
+            pdf_txt = codecs.open(txt, 'r', 'utf-8').readlines()
         else:
-            pdf_txt = open(self.path, 'r')
+            pdf_txt = open(txt, 'r').readlines()
+        os.remove(txt)
+        
         # First search for DOI and ABS/arXiv bibcode by regex
         bibcode = None
         for line in pdf_txt:
             line = line.lower()
             try:
-                self.identifier_type = 'doi'
-                self.identifier = re.search(
-                                    r'[0-9]{2}'       # 2 digits
-                                    r'\.'             # .
-                                    r'[0-9]{4}'       # 4 digits
-                                    r'/'              # /
-                                    r'.*?'            # min num of anything
-                                    r'(?=[\ (\n)])',  # end at space/newline
-                                    line            ).group()
-                return
+                identifier_type = 'doi'
+                identifier = re.search(r'[0-9]{2}'       # 2 digits
+                                       r'\.'             # .
+                                       r'[0-9]{4}'       # 4 digits
+                                       r'/'              # /
+                                       r'.*?'            # min num of anything
+                                       r'(?=[\ (\n)])',  # end at space/newline
+                                       line            ).group()
+                return identifier, identifier_type
             except AttributeError:
                 pass
             try:
@@ -106,29 +218,29 @@ class Article:
                 bibcode = line.split()[0][6:]
                 if bibcode[-2] == 'v':
                     bibcode = bibcode[:-2]
-                self.identifier_type = 'arxiv'
-                self.identifier = bibcode
-                return
+                identifier_type = 'arxiv'
+                identifier = bibcode
+                return identifier, identifier_type
             except ValueError:
                 pass
             try:
                 #abs bibcode
-                self.identifier_type = 'abs'
-                self.identifier = re.match(
-                                    r'[0-9]{4}'     # year
-                                    r'[a-z&]{2,6}'  # journal
-                                    r'.*'           # some number of .'s
-                                    r'[0-9]{1,4}'   # volume
-                                    r'[a-z]?'       # can have 'L' etc
-                                    r'.*'           # some number of .'s
-                                    r'[0-9]{1,4}'   # start page
-                                    r'[a-z]'        # author initial
-                                    r'\n',          # new line
-                                    line          ).group()[:-1]
-                return
+                identifier_type = 'abs'
+                identifier = re.match(r'[0-9]{4}'     # year
+                                      r'[a-z&]{2,6}'  # journal
+                                      r'.*'           # some number of .'s
+                                      r'[0-9]{1,4}'   # volume
+                                      r'[a-z]?'       # can have 'L' etc
+                                      r'.*'           # some number of .'s
+                                      r'[0-9]{1,4}'   # start page
+                                      r'[a-z]'        # author initial
+                                      r'\n',          # new line
+                                      line          ).group()[:-1]
+                return identifier, identifier_type
             except AttributeError:
                 continue
-        pdf_txt.seek(0)
+        #pdf_txt.seek(0)  # Return to start of file
+        
         # Not found, so have to construct an ABS bibcode
         # List so that order is preserved (for apjs)
         journals = [['a&a', 'aap'],
@@ -150,7 +262,7 @@ class Article:
                 vol_pages_re = (r'[0-9]{1,4}'     # volume
                                 r'[:,\s]{1,4}'    # volume-pages separator
                                 r'l?'             # if a Letter
-                                r'[0-9]{1,4}'     # start page
+                                r'[0-9]{1,4}'     # start page s
                                 r'([-––è]|\sy)?'  # start-end page separator
                                 r'l?'             # if a letter
                                 r'([0-9]{1,4})?'  # end page (may not exist)
@@ -170,33 +282,29 @@ class Article:
                 year = re.search('[0-9]{4}', year_line).group()
 
                 # Construct bibcode from parts derived above
-                self.identifier_type = 'abs'
-                self.identifier = ''.join([year, journal,
+                identifier_type = 'abs'
+                identifier = ''.join([year, journal,
                                            '.' * (9 - len(journal)
                                                     - len(volume) ),
                                            volume, qualifier,
                                            '.' * (4 - len(page)), page])
-                return
+                return identifier, identifier_type
 
-    def create_url(self, ads_mirror):
+
+    def bibtex_url(self):
         """
         Get a URL of a BibTeX entry for the paper
 
-        Parameters:
-        -----------
-        identifier: 2 element tuple, (identifier type, value)
-            identifier type can be {'doi', arxiv', 'abs'}
-
-        Returns:
-        --------
+        Returns
+        -------
         string
             A URL that can be resolved to find a BibTeX entry
         """
         if self.identifier_type is 'doi':
-            self.url = ''.join(['http://', ads_mirror,
-                                '/cgi-bin/nph-bib_query?'
-                                '&doi={0}'.format(self.identifier),
-                                '&data_type=BIBTEX&db_key=AST&nocookieset=1'])
+            url = ''.join(['http://', self.ads_mirror,
+                           '/cgi-bin/nph-bib_query?',
+                           '&doi={0}'.format(self.identifier),
+                           '&data_type=BIBTEX&db_key=AST&nocookieset=1'     ])
         elif self.identifier_type is 'arxiv':
             # Two different formats for arxiv_ids (change at 2007)
             # Paper may also have been submitted to another branch e.g. hep
@@ -217,144 +325,178 @@ class Article:
             arxiv_ads = year + arxiv_ads
             if self.identifier == 'hep':
                arxiv_ads = self.identifier
-            self.url = ''.join(['http://', ads_mirror,
-                                '/cgi-bin/nph-bib_query?',
-                                '&bibcode={0}'.format(arxiv_ads),
-                                '&data_type=BIBTEX&db_key=AST&nocookieset=1'])
+            url = ''.join(['http://', self.ads_mirror,
+                           '/cgi-bin/nph-bib_query?',
+                           '&bibcode={0}'.format(arxiv_ads),
+                           '&data_type=BIBTEX&db_key=AST&nocookieset=1'     ])
         else:  # ABS code
-            self.url = ''.join(['http://', ads_mirror,
-                                '/cgi-bin/nph-bib_query?',
-                                '&bibcode={0}'.format(quote(self.identifier)),
-                                '&data_type=BIBTEX&db_key=AST&nocookieset=1' ])
-        return
+            url = ''.join(['http://', self.ads_mirror,
+                           '/cgi-bin/nph-bib_query?',
+                           '&bibcode={0}'.format(quote(self.identifier)),
+                           '&data_type=BIBTEX&db_key=AST&nocookieset=1'     ])
+        return url
 
 
-    def get_bibtex(self, ads_mirror):
+    def import_from_bibtex_url(self):
+        """
+        Get the bibtex entry for the article from ADS and parse it
+        """
+        # Get the entry from self.url
         full_bibtex_page = req.urlopen(self.url).readlines()
-
-        bib_list = []
+        
+        # Get range of lines to parse
+        bib = []
         for line in full_bibtex_page[5:-1]:
-            bib_list.append(line.decode('iso-8859-1'))
+            bib.append(line.decode('iso-8859-1'))
+        # Parse these lines
+        self.import_from_bibtex(bib)
 
-        bib_dict = parse_bibtex(bib_list)
-        print(bib_dict)
+        
+    def import_from_bibtex(self, bibtex):
+        """
+        Parse a bibtex entry and fill various member variables
+        
+        Parameters
+        ----------
+        bibtex : list of strings
+            The bibtex entry to parse
+        """
+        # Get a dictionary of the bibtex key value pairs
+        self.bibtex = parse_bibtex_entry(bibtex)
 
-        self.bibtex = {}
-        # Need to parse bibtex entry and make necessary changes
-        for line in range(len(bib)):
-            line_list = bib[line].lower().split()
-            if line_list[:9] == '@article{':
-                self.bibcode = line_list[9:-1]
-                self.bibtex['bibcode'] = self.bibcode
-            if line_list[0] == 'author':
-                self.bibtex['author'] = []
-                bib[line] = bib[line][10:]
-                for author_line in range(line, len(bib)):
-                    if (bib[author_line] in ['\n', '}\n'] or
-                            bib[author_line].lower().split()[1] is '='):
-                        break
-                    for author in author_line.lower().split('and'):
-                        if author == '\n':
-                            continue
-                        count = 0
-                        name = ''
-                        initials = ''
-                        initial_list = []
-                        for character in author:
-                            if character == '{':
-                                count += 1
-                            elif character == '}':
-                                count -= 1
-                            if count > 0:
-                                name += character
-                            else:
-                                initials += character
-                        for element in initials.split('.'):
-                            for character in element:
-                                if character.isalpha():
-                                    initial_list.append(character)
-                        self.authors.append(latex_to_text(name[1:]),
-                                           tuple(initial_list)     )
-                self.author = self.authors[0][0]
-            elif line_list[0] == 'year':
-                self.bibtex['year'] = line_list[2][:-1]
-            elif line_list[0] == 'journal':
-                self.bibtex['journal']= format_journal(' '.join(line_list[2:]))
-            elif line_list[0] == 'adsurl':
-                self.url = os.path.split(line_list[2][1:-2])[-1]
-                self.url = self.url.replace(ads_mirror, 'adsabs.harvard.edu')
-                self.bibtex['url'] = self.url
-            elif line_list[0] == 'doi':
-                self.doi = line_list[2][1:-2]
-                self.bibtex['doi'] = self.doi
-            elif line_list[0] == 'title':
-                self.title = latex_to_text(bib[line][14:-4])
-
+        # Fill member variables from this dictionary
+        self.author    = self.bibtex['author'][0][0]
+        self.authors   = self.bibtex['author']
+        try:
+            self.doi       = self.bibtex['doi']
+        except KeyError:  # arXiv papers may not have DOIs yet
+            pass
+        self.journal   = self.bibtex['journal'] = \
+                                        format_journal(self.bibtex['journal'])
+        self.reference = self.bibtex['reference']
+        self.title     = self.bibtex['title']
+        self.type      = self.bibtex['type']
+        # Replace ADS mirror with main page for inclusion in bibtex file
+        self.url       = self.bibtex['url'] = self.bibtex['adsurl'] = \
+                            self.bibtex['adsurl'].replace(self.ads_mirror,
+                                                          'adsabs.harvard.edu')
+        self.year      = self.bibtex['year']
+        
+        # These were just to fill the member variables (not wanted in bibtex)
+        for key in ('reference', 'type'):
+            del(self.bibtex[key])
+        
+        
+    def rename_file(self):
+        """
+        Rename the pdf following a specific pattern
+        
+        Authur - Year - ADS bibcode - Title.pdf
+        """
+    
+        print(self.path)
+        print(''.join(['  --> ', os.path.split(self.path)[0], '/', 
+                       ' - '.join([latex_to_text(self.author),
+                                   self.reference,
+                                   latex_to_text(self.title)]), '.pdf', '\n']))
+        os.rename(self.path, ''.join([os.path.split(self.path)[0], '/',
+                                    ' - '.join([latex_to_text(self.author),
+                                                self.reference,
+                                                latex_to_text(self.title)  ]),
+                                      '.pdf'                                  )
+        
 
 def parse_bibtex_entry(bib_list):
-
+    """
+    Parse the text of a bibtex entry for an article and return a dictionary
+    
+    Parameters
+    ----------
+    bib_list : list of strings
+        The bibtex entry to parse
+        
+    
+    """
     bib_dict = {}
     last_key = None
     for line in bib_list:
-        line_list = line.split()
+        line_list = line.strip().split()
         try:
-            if line_list[1] == '=':
-                bib_dict[line_list[0]] = ' '.join(line_list[2:])
+            if line_list[1] == '=':  # If the start of key = value pair
+                bib_dict[line_list[0]] = line_list[2:]
                 last_key = line_list[0]
             else:
-                bib_dict[last_key] += line
+                raise IndexError
+        except IndexError:  # If not the start of a key = value pair
+            if line[0] == '@':
+                # Determine bibtex entry definition line properties
+                bib_dict['type'] = [re.search(r'(?<=@)'   # preceded by @
+                                             r'.*'       # matches anything
+                                             r'(?={)' ,  # followed by {
+                                             line      ).group().lower()]
+                bib_dict['reference'] = [re.search(r'(?<={)'  # preceded by {
+                                                  r'.*'      # matches anything
+                                                  r'(?=,)' ,  # followed by ,
+                                                  line      ).group()]
+            else:
+                # Add line to value of last defined key
+                bib_dict[last_key] += line_list
+    # Remove last } of entry
+    bib_dict[last_key] = ''.join( \
+                ' '.join(bib_dict[last_key]).rsplit('}', 1)).split()
+    
     # All bibtex keys are now dictionary keys
     # Need to remove { " , from beginning/end of bib_dict values
     for key in bib_dict:
+        bib_dict[key] = ' '.join(bib_dict[key])
         if bib_dict[key][-1] == ',':
             bib_dict[key] = bib_dict[key][:-1]
-        while:
-            if bib_dict[key][0] in ['{', '"']
-                    and bib_dict[key][-1] in ['{', '"']:
+        while True:
+            count = 0
+            len_greater_than_0 = 0
+            for character in bib_dict[key]:
+                if count > 0:
+                    len_greater_than_0 += 1
+                if character == '{':
+                    count += 1
+                elif character == '}':
+                    count -= 1
+            if ((bib_dict[key][0] == '"' and bib_dict[key][-1] == '"') or
+                len_greater_than_0 == (len(bib_dict[key]) - 1)           ):
                 bib_dict[key] = bib_dict[key][1:-1]
             else:
                 break
+
+    # Now parse authors into a tuple of tuples
+    authors = []
+    # Authors separated by ' and '
+    for author in bib_dict['author'].split(' and '):
+        if author == '\n':
+            continue
+        count = 0
+        open_count = 0
+        name = ['']
+        initials = ''
+        # Example author: {Ex{\'a}mple}, M.~R.
+        for character in author:
+            if character == '{':
+                open_count += 1
+                count += 1
+            elif character == '}':
+                count -= 1
+            # Need to include { if inside the name (i.e. for {\'a})
+            if count > 0 and (character != '{' or open_count > 1):
+                name[0] += character
+            else:
+                initials += character
+        for element in initials.split('.'):
+            for character in element:
+                if character.isalpha():
+                    name.append(character)
+        authors.append(tuple(name))
+    bib_dict['author'] = tuple(authors)
+
     return bib_dict
-
-
-def exists_in_bib(pdf, bib_file):
-    """
-    Determine if a paper has already been added to the bib_file
-
-    Parameters:
-    -----------
-    pdf: string
-        The current pdf being processed
-    bib_file: string
-        The name of the .bib file the script writes to
-
-    Returns:
-    --------
-    boolean
-        True if paper exists in bib_file, False otherwise
-    """
-    try:
-        pdf = pdf[(pdf.index('/') + 1):]
-    except ValueError:
-        pass
-    try:
-        bibcode = pdf.split()[2]
-        #name_end = pdf.index(' - ')
-        #ref_name = ''.join((pdf[:name_end] +
-        #                    pdf[(name_end + 3):][:(pdf[(name_end + 3):] \
-        #                                           .index(' - '))]
-        #                   ).lower().split())
-        exists = False
-        with open(bib_file, 'r') as bib:  # make sure bib_file gets closed
-            for line in bib:
-                if line.find(bibcode) != -1:
-                    exists = True
-                    break
-        if exists:
-            return True
-    except (ValueError, IOError):
-        pass
-    return False
 
 
 def format_journal(journal):
@@ -371,7 +513,6 @@ def format_journal(journal):
     string
         The formatted version of a journal name eg 'ApJ'
     """
-    journal_name = journal[1: -2]
     journals = {
         r'\aap': r'A\&A',
         r'\aaps': r'A\&AS',
@@ -386,10 +527,9 @@ def format_journal(journal):
         r'\pasp': 'PASP',
         r'\physrep': 'Phys. Rep.',
     }
-    text_name = journal_name
-    if journal_name in journals:
-        text_name = journals[journal_name]
-    return '{' + text_name + '},'
+    if journal in journals:
+        return journals[journal]
+    return journal
 
 
 def latex_to_text(latex):
@@ -415,9 +555,16 @@ def latex_to_text(latex):
                    [[r'\gt'], '>'],
                    [[r'\lt'], '<'],
                    [[r'\~{n}', r'\~n'], 'ñ'],
+                   [[r'\l'], 'ł'],
+                   [[r'\o'], 'ø'],
+                   [[r'\v s'], 'š'],
                    [[r'\~', r'\tilde'], '~'],
                    [[r'\ndash'], '-'],
                    [[r'\&'], '&'],
+                   [[r"\'a"], 'á'],
+                   [[r"\'e"], 'é'],
+                   [[r'\"o'], 'ö'],
+                   [[r'\"u'], 'ü'],
                    [[r'\"', r"\'", "'", '`',
                      '{', '}','$', '/', '^', '_', '\\'], '']
                   ]
@@ -425,154 +572,6 @@ def latex_to_text(latex):
         for key in conversion[0]:
             latex = latex.replace(key, conversion[1])
     return latex
-
-
-def reference_name(author, initials, year, ads_bibcode, ads_mirror):
-    """
-    Determine the letter after the date to cite as ie author2012a
-
-    Parameters:
-    -----------
-    author : string
-        The lower case surname of the author
-    initials : string
-        The author's initials in the form 'init1+init2'
-    year : string
-        The year the paper was published
-    ads_bibcode : string
-        the paper's ADS internal reference code
-
-    Returns:
-    --------
-    string
-        The complete paper name, i.e. author2012a
-    """
-    # Query ADS for all papers written by author in year, oldest first
-    author_year_url = ('http://' + ads_mirror + '/cgi-bin/nph-abs_connect?'
-    'db_key=AST''&db_key=PRE&qform=AST&arxiv_sel=astro-ph&arxiv_sel=cond-mat'
-    '&arxiv_sel=cs&arxiv_sel=gr-qc&arxiv_sel=hep-ex&arxiv_sel=hep-lat'
-    '&arxiv_sel=hep-ph&arxiv_sel=hep-th&arxiv_sel=math&arxiv_sel=math-ph'
-    '&arxiv_sel=nlin&arxiv_sel=nucl-ex&arxiv_sel=nucl-th&arxiv_sel=physics'
-    '&arxiv_sel=quant-ph&arxiv_sel=q-bio&sim_query=YES&ned_query=YES'
-    '&adsobj_query=YES&aut_logic=OR&obj_logic=OR&author=%5E{0}%2C+{1}&object='
-    '&start_mon=&start_year={2}&end_mon=&end_year={2}&ttl_logic=OR&title='
-    '&txt_logic=OR&text=&nr_to_return=200&start_nr=1&jou_pick=ALL&ref_stems='
-    '&data_and=ALL&group_and=ALL&start_entry_day=&start_entry_mon='
-    '&start_entry_year=&end_entry_day=&end_entry_mon=&end_entry_year='
-    '&min_score=&sort=ODATE&data_type=Custom&format=%25r&aut_syn=YES'
-    '&ttl_syn=YES&txt_syn=YES&aut_wt=1.0&obj_wt=1.0&ttl_wt=0.3&txt_wt=3.0'
-    '&aut_wgt=YES&obj_wgt=YES&ttl_wgt=YES&txt_wgt=YES&ttl_sco=YES&txt_sco=YES'
-    '&version=1').format('+'.join(author.split()), initials, year)
-
-    # Need this request to specifiy custom user agent
-    url_req = req.Request(author_year_url,
-    headers={'User-Agent': 'Bibtex retrieval script'})
-    full_auth_year_page = req.urlopen(url_req).readlines()
-
-    # Match bibcode to one of those returned - place in list determines letter
-    # This could be changed to DOI - it affects conference proceedings and old
-    # papers without a DOI
-    publication_number = 0
-    count = -1
-    for line in range(5, len(full_auth_year_page)):
-        if full_auth_year_page[line][:-2].decode('iso-8859-1') != '':
-            count += 1
-        if full_auth_year_page[line][:-2].decode('iso-8859-1') == ads_bibcode:
-            publication_number = count
-
-    paper_name = ''.join(author.lower().split()) + year
-    if count > 0:
-        paper_name += chr(ord('a') + publication_number)
-    return paper_name
-
-
-def write_new_entry(identifier, out_file, ads_mirror):
-    """
-    Write a BibTeX entry for identifier to the out_file
-
-    Parameters:
-    -----------
-    identifier : 2 element tuple (identifier type, value)
-        Identifier type can be {'doi', arxiv', 'abs'}
-    out_file : string
-        The file to write to, e.g. 'articles.bib'
-
-    Returns:
-    --------
-    tuple, 3 elements
-        (author : str, reference name : str, title of paper : str)
-    """
-    full_bibtex_page = req.urlopen(bibtex_url(identifier,
-                                              ads_mirror)).readlines()
-
-    bib = []
-    for line in full_bibtex_page[5:-1]:
-        bib.append(line.decode('iso-8859-1'))
-
-    details = {}
-    # Need to parse bibtex entry and make necessary changes
-    for line in range(len(bib)):
-        line_list = bib[line].split()
-        if line_list[0] == 'author':
-            details['author'] = re.search(r'(?<={{)'  # start at {{
-                                          r'.*?'      # min num of anything
-                                          r'(?=},)',  # end at },
-                                          bib[line]).group()
-            details['initials'] = re.search(r'(?<=}, )'       # start at '}, '
-                                            r'.*?'            # min num of any
-                                            r'(?=(}| and))',  # end at } or and
-                                            bib[line]).group()
-            if details['initials'][:4] == 'Jr.,':
-                details['initials'] = details['initials'][4:]
-            details['initials'] = '+'.join([i for i in details['initials']
-                                            if i.isalpha()])
-            details['author'] = latex_to_text(details['author'])
-            #details['author'].replace('-', '')
-        elif line_list[0] == 'year':
-            details['year'] = line_list[2][:-1]
-        elif line_list[0] == 'journal':
-            line_list[2] = format_journal(' '.join(line_list[2:]))
-            del line_list[3:]
-        elif line_list[0] == 'adsnote':
-            details['adsnote_line'] = line
-        elif line_list[0] == 'adsurl':
-            line_list[0] = 'url'
-            details['ads_bibcode'] = os.path.split(line_list[2][1:-2])[-1]
-            try:
-                pos = details['ads_bibcode'].index('%26')
-                # Replace doesn't work for some reason
-                details['ads_bibcode'] = (details['ads_bibcode'][:pos] + '&' +
-                                          details['ads_bibcode'][(pos + 3):])
-            except ValueError:
-                pass
-            # Change link in URL to main ADS website
-            line_list[2] = line_list[2].replace(ads_mirror,
-                                                'adsabs.harvard.edu')
-        #elif line_list[0] == 'doi':
-        #    doi = line_list[2][1:-2]
-        elif line_list[0] == 'title':
-            details['title'] = latex_to_text(bib[line][14:-4])
-        bib[line] = ' '.join(line_list) + '\n'
-
-    del(bib[details['adsnote_line']])
-
-    # Look up best name to use for reference (need to determine letter on end)
-    try:
-        #ref_name = reference_name(details['author'], details['initials'],
-        #                          details['year'], details['ads_bibcode'])
-        bib[0] = ''.join([bib[0][:bib[0].find('{') + 1].lower(),
-                          details['ads_bibcode'], ',\n'         ])
-
-        with open(out_file, 'a') as bib_file:
-            for line in bib:
-                bib_file.write(line)
-            bib_file.write('\n')
-        #return (details['author'], details['year'], ref_name, details['title'])
-        return "{author} - {year} - {bibcode} - {title}".format(
-                author=details['author'], year=details['year'],
-                bibcode=details['ads_bibcode'], title=details['title'])
-    except UnboundLocalError:  # Paper has no ADS bibcode
-        raise LookupError
 
 
 def main():
@@ -596,59 +595,47 @@ def main():
     # Format paths to args.directory and bib_file correctly
     if args.directory[-1] != '/':
         args.directory += '/'
-    txt = args.directory + 'pdf.txt'
-    path_head, path_tail = os.path.split(args.bibtex_file)
-    if path_head is '':
-        bib_file = args.directory + args.bibtex_file
-    else:
-        bib_file = args.bibtex_file
+        
+    # Create BibtexFile
+    if args.bibtex_file == 'articles.bib':
+        args.bibtex_file = args.directory + 'articles.bib'
+    bibtex_file = BibtexFile(args.bibtex_file)
 
     # Parse pdfs and write to bibtex_file
     ads_mirror = 'esoads.eso.org'
     count = {'total': 0, 'already_included': 0, 'added': 0, 'failed': 0}
-    for pdf in glob.glob(args.directory + '*.pdf'):
+    for pdf_path in glob.glob(args.directory + '*.pdf'):
         count['total'] += 1
         # Skip if pdf is already included in bib_file
-        if exists_in_bib(pdf=pdf, bib_file=bib_file) == True:
-            print('*** Already in ' + bib_file + ':', pdf)
-            count['already_included'] += 1
-            continue
-        # Extract identifiying information from the first page of the pdf
-        subprocess.call(['pdftotext', '-l', '1', pdf, txt],
-                        shell=False, stderr=subprocess.PIPE)
-        # 2 element tuple doi, arxiv, abs
-        identifier = extract_info(txt)
-        os.remove(txt)
         try:
-            if identifier is None:
-                raise LookupError
-            # Write bibtex for paper to bib_file
-            new_name = write_new_entry(identifier=identifier,
-                                         out_file=bib_file   )
-            # Rename the pdf
-            #new_name = args.directory + '{0} - {1} - {2}.pdf' \
-            #            .format(paper_info[0],
-            #               paper_info[1][len(''.join(paper_info[0].split())):],
-            #                    paper_info[2])
-            print(pdf + '\n', ' -->', new_name)
+            if pdf_path.split(' - ')[2] in bibtex_file:
+                print(''.join(['*** Already in ', bibtex_file.path,
+                               ':\n', pdf_path, '\n'            ]))
+                count['already_included'] += 1
+                continue
+        except IndexError:
+            pass
+        # If pdf is new, add to the bibtex file
+        try:
+            bibtex_file.append(Article(path=pdf_path))
             count['added'] += 1
-            os.rename(pdf, new_name)
-        except (LookupError, urllib.error.HTTPError):
-            print("*** Cannot process", pdf)
+        except (LookupError, TypeError, urllib.error.HTTPError):
+            print("*** Cannot process {0}\n".format(pdf_path))
             count['failed'] += 1
         except urllib.error.URLError:
             print("*** ERROR: pdftobib requires an internet connection")
             sys.exit(None)
-
-    print()
+    
+    # Write new bibtex file
+    bibtex_file.write_to_file()
+    
     # Print a summary of the operation
     print('Summary:')
-    print(('Total PDFs: {0}\nAlready included in {bib}: {1}\n'
-           'Added to {bib}: {2}\nFailed: {3}').format(count['total'],
-                                                count['already_included'],
-                                                      count['added'],
-                                                      count['failed'],
-                                                      bib=bib_file        ))
+    print('Total PDFs: {0}'.format(count['total']))
+    print('Already included in {1}: {0}'.format(count['already_included'],
+                                                args.bibtex_file          ))
+    print('Added to {1}: {0}'.format(count['added'], args.bibtex_file))
+    print('Failed: {0}'.format(count['failed']))
 
 
 if __name__ == '__main__':

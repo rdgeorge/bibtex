@@ -70,3 +70,4 @@ hyperlinking using ``abbrvnatR.bst``.
 Usage is::
     
     pdftobib [DIRECTORY (default: .)] [--bibtex_file FILE (default: articles.bib)]
+

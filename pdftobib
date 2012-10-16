@@ -249,6 +249,8 @@ class Article:
                     ['annu. rev. astron. astrophys.', 'ara&a'],
                     ['annu. rev. astro. astrophys.', 'ara&a'],
                     ['mon. not. r. astron. soc.', 'mnras'],
+                    ['res. astron. astrophys.', 'raa'],
+                    ['research in astron. astrophys.', 'raa']
                    ]
         for line in pdf_txt:
             line = line.lower()
@@ -262,7 +264,7 @@ class Article:
                                 r'[:,\s]{1,4}'    # volume-pages separator
                                 r'l?'             # if a Letter
                                 r'[0-9]{1,4}'     # start page s
-                                r'([-––è]|\sy)?'  # start-end page separator
+                                r'([-––è]|\sy)?'  # start-end page sep
                                 r'l?'             # if a letter
                                 r'([0-9]{1,4})?'  # end page (may not exist)
                                )

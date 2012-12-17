@@ -10,6 +10,7 @@ import argparse
 import glob
 import os
 import re
+from string import whitespace
 import subprocess
 import sys
 try:
@@ -29,7 +30,7 @@ class BibtexFile:
     def __init__(self, path=None):
         """
         Constructor, optionally imports from a specified bibtex file
-        
+
         Parameters
         ----------
         path : string, optional
@@ -51,7 +52,7 @@ class BibtexFile:
     def append(self, item):
         """
         Append an Article to the BibtexFile
-        
+
         Parameters
         ----------
         item : Article
@@ -66,7 +67,7 @@ class BibtexFile:
     def import_articles_from_file(self, path=None):
         """
         Import a bibtex file and create an Article for each entry
-        
+
         Parameters
         ----------
         path : string, optional
@@ -121,21 +122,21 @@ class BibtexFile:
                         pass
                     authors.append(''.join(formatted_author))
                 bib_file.write('author = {' + ' and '.join(authors) + '},\n')
-                
+
                 # Write other keys
                 for key in article.bibtex:
                     if key != 'author':
                         bib_file.write(''.join([key, ' = {',
                                                 article.bibtex[key], '},\n']))
                 bib_file.write('}\n\n')
-                
+
 
 class Article:
 
     def __init__(self, path=None, bibtex=None):
         """
-        Constructor, takes optional path to pdf or bibtex (list of strings) 
-        
+        Constructor, takes optional path to pdf or bibtex (list of strings)
+
         Parameters
         ----------
         path : string, optional
@@ -146,7 +147,7 @@ class Article:
         self.path = path
         # ADS mirror to query (to take load off adsabs.harvard.edu)
         self.ads_mirror = 'esoads.eso.org'
-        
+
         # If a pdf has been given
         if path is not None:
             # Extract identifying information from the pdf
@@ -159,7 +160,7 @@ class Article:
             # Rename the file in the pattern
             # author - year - ads_bibcode - title.pdf
             self.rename_file()
-            
+
         # If a list of strings containing a bibtex entry has been given
         if bibtex is not None:
             self.import_from_bibtex(bibtex)
@@ -175,7 +176,7 @@ class Article:
     def identifier_from_article(self):
         """
         Extract identifying information from a text file converted from a pdf
-        
+
         Long method with lots of regex magic
 
         Returns
@@ -193,7 +194,7 @@ class Article:
         else:
             pdf_txt = open(txt, 'r').readlines()
         os.remove(txt)
-        
+
         # First search for DOI and ABS/arXiv bibcode by regex
         bibcode = None
         for line in pdf_txt:
@@ -351,7 +352,7 @@ class Article:
         """
         # Get the entry from self.url
         full_bibtex_page = req.urlopen(self.url).readlines()
-        
+
         # Get range of lines to parse
         bib = []
         for line in full_bibtex_page[5:-1]:
@@ -359,11 +360,11 @@ class Article:
         # Parse these lines
         self.import_from_bibtex(bib)
 
-        
+
     def import_from_bibtex(self, bibtex):
         """
         Parse a bibtex entry and fill various member variables
-        
+
         Parameters
         ----------
         bibtex : list of strings
@@ -392,20 +393,20 @@ class Article:
                             self.bibtex['adsurl'].replace(self.ads_mirror,
                                                           'adsabs.harvard.edu')
         self.year        = self.bibtex['year']
-        
+
         # These were just to fill the member variables (not wanted in bibtex)
         for key in ('reference', 'type'):
             del(self.bibtex[key])
-        
-        
+
+
     def rename_file(self):
         """
         Rename the pdf following a specific pattern
-        
+
         Authur - Year - ADS bibcode - Title.pdf
         """
         print(self.path)
-        print(''.join(['  --> ', os.path.split(self.path)[0], '/', 
+        print(''.join(['  --> ', os.path.split(self.path)[0], '/',
                        ' - '.join([latex_to_text(self.author),
                                    self.reference,
                                    latex_to_text(self.title)]), '.pdf', '\n']))
@@ -414,21 +415,21 @@ class Article:
                                               self.reference,
                                               latex_to_text(self.title)  ]),
                                       '.pdf'                                ]))
-        
+
 
 def parse_bibtex_entry(bib_list):
     """
     Parse the text of a bibtex entry for an article and return a dictionary
-    
+
     Parameters
     ----------
     bib_list : list of strings
         The bibtex entry to parse
-        
+
     Returns
     -------
     dictionary
-        A dictionary of bibtex key : value pairs    
+        A dictionary of bibtex key : value pairs
     """
     bib_dict = {}
     last_key = None
@@ -457,7 +458,7 @@ def parse_bibtex_entry(bib_list):
     # Remove last } of entry
     bib_dict[last_key] = ''.join( \
                 ' '.join(bib_dict[last_key]).rsplit('}', 1)).split()
-    
+
     # All bibtex keys are now dictionary keys
     # Need to remove { " , from beginning/end of bib_dict values
     for key in bib_dict:
@@ -484,31 +485,22 @@ def parse_bibtex_entry(bib_list):
                 break
 
     # Now parse authors into a tuple of tuples
+    # This is hardcoded for ADS braces format
     authors = []
     # Authors separated by ' and '
+    # Example author: {Ivezi{\'c}}, {\v Z}.~R.
     for author in bib_dict['author'].split(' and '):
         if author == '\n':
             continue
-        count = 0
-        open_count = 0
-        name = ['']
-        initials = ''
-        # Example author: {Ex{\'a}mple}, M.~R.
-        for character in author:
-            if character == '{':
-                open_count += 1
-                count += 1
-            elif character == '}':
-                count -= 1
-            # Need to include { if inside the name (i.e. for {\'a})
-            if count > 0 and (character != '{' or open_count > 1):
-                name[0] += character
-            else:
-                initials += character
-        for element in initials.split('.'):
-            for character in element:
-                if character.isalpha():
-                    name.append(character)
+        try:
+            name = [re.search(r'(?<=\{).+(?=\},)', author).group(0)]
+            initials = re.search(r'(?<=\},).*', author).group(0).split('.')
+            for initial in initials:
+                stripped = initial.strip('~' + whitespace)
+                if stripped != '':
+                    name.append(stripped)
+        except AttributeError:
+            name = [re.search(r'(?<=\{).+(?=\})', author).group(0)]
         authors.append(tuple(name))
     bib_dict['author'] = tuple(authors)
 
@@ -611,7 +603,7 @@ def main():
     # Format paths to args.directory and bib_file correctly
     if args.directory[-1] != '/':
         args.directory += '/'
-        
+
     # Create BibtexFile
     if args.bibtex_file == 'articles.bib':
         args.bibtex_file = args.directory + 'articles.bib'
@@ -626,7 +618,7 @@ def main():
         count['total'] += 1
         # Skip if pdf is already included in bib_file
         try:
-            if pdf_path.split(' - ')[2] in bibtex_file:
+            if pdf_path.split(' - ')[1] in bibtex_file:
                 print(''.join(['*** Already in ', bibtex_file.path,
                                ':\n', pdf_path, '\n'            ]))
                 count['already_included'] += 1
@@ -643,10 +635,10 @@ def main():
         except urllib.error.URLError:
             print("*** ERROR: pdftobib requires an internet connection")
             sys.exit(None)
-    
+
     # Write new bibtex file
     bibtex_file.write_to_file()
-    
+
     # Print a summary of the operation
     print('Summary:')
     print('Total PDFs: {0}'.format(count['total']))

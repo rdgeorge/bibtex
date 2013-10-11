@@ -1,0 +1,83 @@
+#!/usr/bin/env python
+
+"""
+This program reads all .pdf files in its directory and produces a .bib file
+(default: articles.bib), containing BibTeX extries for all pdfs possible.
+"""
+import argparse, glob, sys, urllib
+#reload(sys)  # Hack to put setdefaultencoding back in after python startup
+#sys.setdefaultencoding('utf-8')  # Output utf-8 to teminal
+
+from bibtex.article import Article
+from bibtex.bibtexfile import BibtexFile
+
+
+def main():
+    """
+    Parse command line arguments and run script stages
+    """
+    parser = argparse.ArgumentParser(description=("Process a directory of .pdf"
+                                                  " files into a bibtex .bib"
+                                                  " file"))
+    parser.add_argument("directory", type=str,
+                        help=("A directory of .pdf files to add to a .bib"
+                              " file (default: .)"))
+    parser.add_argument("bibtex_file", type=str, nargs='?',
+                        default="articles.bib",
+                        help=("The .bib file to append bibtex entries to,"
+                              " the full path can be specified, if not the"
+                              " file will be created in the pdf directory"
+                              " (default: articles.bib)"                  ))
+    args = parser.parse_args()
+
+    # Format paths to args.directory and bib_file correctly
+    if args.directory[-1] != '/':
+        args.directory += '/'
+
+    # Create BibtexFile
+    if args.bibtex_file == 'articles.bib':
+        args.bibtex_file = args.directory + 'articles.bib'
+    bibtex_file = BibtexFile(args.bibtex_file)
+
+    # Parse pdfs and write to bibtex_file
+    ads_mirror = 'esoads.eso.org'
+    count = {'total': 0, 'already_included': 0, 'added': 0, 'failed': 0}
+    pdf_paths = glob.glob(args.directory + '*.pdf')
+    pdf_paths.sort()
+    for pdf_path in pdf_paths:
+        count['total'] += 1
+        # Skip if pdf is already included in bib_file
+        try:
+            if pdf_path.split(' - ')[1] in bibtex_file:
+                print(''.join(['*** Already in ', bibtex_file.path,
+                               ':\n', pdf_path, '\n'            ]))
+                count['already_included'] += 1
+                continue
+        except IndexError:
+            pass
+        # If pdf is new, add to the bibtex file
+        try:
+            bibtex_file.append(Article(path=pdf_path))
+            count['added'] += 1
+        except (LookupError, TypeError, urllib.error.HTTPError):
+            print("*** Cannot process {0}\n".format(pdf_path))
+            count['failed'] += 1
+        except urllib.error.URLError:
+            print("*** ERROR: pdftobib requires an internet connection")
+            sys.exit(None)
+
+    # Write new bibtex file
+    bibtex_file.write_to_file()
+
+    # Print a summary of the operation
+    print('Summary:')
+    print('Total PDFs: {0}'.format(count['total']))
+    print('Already included in {1}: {0}'.format(count['already_included'],
+                                                args.bibtex_file          ))
+    print('Added to {1}: {0}'.format(count['added'], args.bibtex_file))
+    print('Failed: {0}'.format(count['failed']))
+
+
+if __name__ == '__main__':
+    main()
+

@@ -1,18 +1,8 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-This module reads all .pdf files in its directory and produces a .bib file
-(default: articles.bib), containing BibTeX extries for all pdfs possible.
-"""
 
 from __future__ import print_function, unicode_literals
-import argparse
-import glob
-import os
-import re
+import os, re, subprocess, sys
 from string import whitespace
-import subprocess
-import sys
 try:
     import urllib
     import urllib.request as req
@@ -23,112 +13,6 @@ except ImportError:
     import codecs
     reload(sys)  # Hack to put setdefaultencoding back in after python startup
     sys.setdefaultencoding('utf-8')  # Output utf-8 to teminal
-
-
-class BibtexFile:
-
-    def __init__(self, path=None):
-        """
-        Constructor, optionally imports from a specified bibtex file
-
-        Parameters
-        ----------
-        path : string, optional
-            The path to a bibtex file to import (default: None = self.path)
-        """
-        self.path = path
-        self.articles = []  # List of Articles
-        if os.path.isfile(path):
-            self.import_articles_from_file()
-
-    def __contains__(self, item):
-        """
-        Returns item (a reference) in the list of article references in self
-        """
-        return repr(item) in [repr(article.reference)
-                              for article in self.articles]
-
-
-    def append(self, item):
-        """
-        Append an Article to the BibtexFile
-
-        Parameters
-        ----------
-        item : Article
-            The Article to append
-        """
-        if type(item) is Article:
-            self.articles.append(item)
-        else:
-            raise TypeError
-
-
-    def import_articles_from_file(self, path=None):
-        """
-        Import a bibtex file and create an Article for each entry
-
-        Parameters
-        ----------
-        path : string, optional
-            The path to a bibtex file to import (default: None = self.path)
-        """
-        if path is None:
-            path = self.path
-        # Get all lines from file
-        with open(path, 'r') as bib_file:
-            lines = bib_file.readlines()
-        count = 0
-        bibtex = []
-        new_article = False
-        for line in lines:
-            # Find lines to use for single entry
-            for character in line.strip():
-                if character == '{':
-                    new_article = True
-                    count += 1
-                elif character == '}':
-                    count -= 1
-            # Add line to this entry
-            if line != '\n':
-                bibtex.append(line)
-            # Entry over, construct Article and append to self.articles
-            if count < 1 and new_article:
-                self.articles.append(Article(bibtex=bibtex))
-                bibtex = []
-                new_article = False
-
-
-    def write_to_file(self):
-        """
-        Write a bibtex entry for all Articles to the file
-        """
-        # Sort by author, year
-        self.articles.sort(key=lambda article: (article.author, article.year))
-        with open(self.path, 'w') as bib_file:
-            for article in self.articles:
-                # Write first line of bibtex (@article{reference, etc)
-                bib_file.write('@{0}{{{1},\n'.format(article.type,
-                                                     article.reference))
-                # Author list needs some special formatting
-                authors = []
-                for author in article.authors:
-                    formatted_author = ['{', author[0], '}']
-                    try:
-                        formatted_author += [', ', author[1], '.']
-                        for initial in author[2:]:
-                            formatted_author += ['~', initial, '.']
-                    except IndexError:
-                        pass
-                    authors.append(''.join(formatted_author))
-                bib_file.write('author = {' + ' and '.join(authors) + '},\n')
-
-                # Write other keys
-                for key in article.bibtex:
-                    if key != 'author':
-                        bib_file.write(''.join([key, ' = {',
-                                                article.bibtex[key], '},\n']))
-                bib_file.write('}\n\n')
 
 
 class Article:
@@ -152,14 +36,14 @@ class Article:
         if path is not None:
             # Extract identifying information from the pdf
             self.identifier, self.identifier_type = \
-                                             self.identifier_from_article()
+                                             self._identifier_from_article()
             # Construct a url linking to the article bibtex entry at ADS
-            self.url = self.bibtex_url()
+            self.url = self._bibtex_url()
             # Parse the bibtex entry
-            self.import_from_bibtex_url()
+            self._import_from_bibtex_url()
             # Rename the file in the pattern
             # author - year - ads_bibcode - title.pdf
-            self.rename_file()
+            self._rename_file()
 
         # If a list of strings containing a bibtex entry has been given
         if bibtex is not None:
@@ -173,7 +57,7 @@ class Article:
         return self.reference
 
 
-    def identifier_from_article(self):
+    def _identifier_from_article(self):
         """
         Extract identifying information from a text file converted from a pdf
 
@@ -294,7 +178,7 @@ class Article:
                 return identifier, identifier_type
 
 
-    def bibtex_url(self):
+    def _bibtex_url(self):
         """
         Get a URL of a BibTeX entry for the paper
 
@@ -347,7 +231,7 @@ class Article:
         return url
 
 
-    def import_from_bibtex_url(self):
+    def _import_from_bibtex_url(self):
         """
         Get the bibtex entry for the article from ADS and parse it
         """
@@ -372,7 +256,7 @@ class Article:
             The bibtex entry to parse
         """
         # Get a dictionary of the bibtex key value pairs
-        self.bibtex = parse_bibtex_entry(bibtex)
+        self.bibtex = _parse_bibtex_entry(bibtex)
 
         # Fill member variables from this dictionary
         self.author      = self.bibtex['author'][0][0]
@@ -383,7 +267,7 @@ class Article:
             pass
         try:
             self.journal = self.bibtex['journal'] = \
-                                        format_journal(self.bibtex['journal'])
+                                _format_journal(self.bibtex['journal'])
         except KeyError:  # Some conference proceedings do not have journals
             self.journal = self.bibtex['series']
         self.reference   = self.bibtex['reference']
@@ -400,25 +284,32 @@ class Article:
             del(self.bibtex[key])
 
 
-    def rename_file(self):
+    def _rename_file(self):
         """
         Rename the pdf following a specific pattern
 
         Authur - Year - ADS bibcode - Title.pdf
         """
         print(self.path)
-        print(''.join(['  --> ', os.path.split(self.path)[0], '/',
-                       ' - '.join([latex_to_text(self.author),
+        print(''.join(['  --> ', os.path.split(self.path)[0],
+                       '/',
+                       ' - '.join([_latex_to_text(self.author),
                                    self.reference,
-                                   latex_to_text(self.title)]), '.pdf', '\n']))
-        os.rename(self.path, ''.join([os.path.split(self.path)[0], '/',
-                                  ' - '.join([latex_to_text(self.author),
-                                              self.reference,
-                                              latex_to_text(self.title)  ]),
-                                      '.pdf'                                ]))
+                                   _latex_to_text(self.title)]),
+                       '.pdf',
+                       '\n'
+                       ]))
+        os.rename(self.path,
+                  ''.join([os.path.split(self.path)[0],
+                           '/',
+                           ' - '.join([_latex_to_text(self.author),
+                                       self.reference,
+                                       _latex_to_text(self.title)  ]),
+                           '.pdf'
+                           ]))
 
 
-def parse_bibtex_entry(bib_list):
+def _parse_bibtex_entry(bib_list):
     """
     Parse the text of a bibtex entry for an article and return a dictionary
 
@@ -445,14 +336,20 @@ def parse_bibtex_entry(bib_list):
         except IndexError:  # If not the start of a key = value pair
             if line[0] == '@':
                 # Determine bibtex entry definition line properties
-                bib_dict['type'] = [re.search(r'(?<=@)'   # preceded by @
-                                             r'.*'       # matches anything
-                                             r'(?={)' ,  # followed by {
-                                             line      ).group().lower()]
-                bib_dict['reference'] = [re.search(r'(?<={)'  # preceded by {
-                                                  r'.*'      # matches anything
-                                                  r'(?=,)' ,  # followed by ,
-                                                  line      ).group()]
+                bib_dict['type'] = [
+                        re.search(r'(?<=@)'  # preceded by @
+                                  r'.*'      # matches anything
+                                  r'(?={)',  # followed by {
+                                  line
+                                  ).group().lower()
+                                    ]
+                bib_dict['reference'] = [
+                        re.search(r'(?<={)'  # preceded by {
+                                  r'.*'      # matches anything
+                                  r'(?=,)' ,  # followed by ,
+                                  line
+                                  ).group()
+                                         ]
             else:
                 # Add line to value of last defined key
                 bib_dict[last_key] += line_list
@@ -477,8 +374,9 @@ def parse_bibtex_entry(bib_list):
                 elif character == '}':
                     count -= 1
             try:
-                if ((bib_dict[key][0] == '"' and bib_dict[key][-1] == '"') or
-                    len_greater_than_0 == (len(bib_dict[key]) - 1)           ):
+                if ((bib_dict[key][0] == '"' and bib_dict[key][-1] == '"')
+                        or
+                        len_greater_than_0 == (len(bib_dict[key]) - 1)    ):
                     bib_dict[key] = bib_dict[key][1:-1]
                 else:
                     raise IndexError
@@ -501,14 +399,17 @@ def parse_bibtex_entry(bib_list):
                 if stripped != '':
                     name.append(stripped)
         except AttributeError:
-            name = [re.search(r'(?<=\{).+(?=\})', author).group(0)]
+            try:
+                name = [re.search(r'(?<=\{).+(?=\})', author).group(0)]
+            except AttributeError:  # likely et al.
+                name = [author]
         authors.append(tuple(name))
     bib_dict['author'] = tuple(authors)
 
     return bib_dict
 
 
-def format_journal(journal):
+def _format_journal(journal):
     """
     Convert ADS journal codes into names suitable for use in references
 
@@ -542,7 +443,7 @@ def format_journal(journal):
     return journal
 
 
-def latex_to_text(latex):
+def _latex_to_text(latex):
     """
     Convert a string with latex characters to a standard character set
 
@@ -556,7 +457,7 @@ def latex_to_text(latex):
     string
         A string converted to a standard format eg H20
     """
-    # Set out a list of conversions (list preserves order - needed for \ etc)
+    # Set out a list of conversions (list preserves order - req. for \ etc)
     conversions = [[[r'\ss'], 'ß'],
                    [[r'\times'], '✕'],
                    [[r'\alpha'], 'α'],
@@ -582,73 +483,3 @@ def latex_to_text(latex):
         for key in conversion[0]:
             latex = latex.replace(key, conversion[1])
     return latex
-
-
-def main():
-    """
-    Parse command line arguments and run script stages
-    """
-    parser = argparse.ArgumentParser(description=("Process a directory of .pdf"
-                                                  " files into a bibtex .bib"
-                                                  " file"))
-    parser.add_argument("directory", type=str,
-                        help=("A directory of .pdf files to add to a .bib"
-                              " file (default: .)"))
-    parser.add_argument("bibtex_file", type=str, nargs='?',
-                        default="articles.bib",
-                        help=("The .bib file to append bibtex entries to,"
-                              " the full path can be specified, if not the"
-                              " file will be created in the pdf directory"
-                              " (default: articles.bib)"                  ))
-    args = parser.parse_args()
-
-    # Format paths to args.directory and bib_file correctly
-    if args.directory[-1] != '/':
-        args.directory += '/'
-
-    # Create BibtexFile
-    if args.bibtex_file == 'articles.bib':
-        args.bibtex_file = args.directory + 'articles.bib'
-    bibtex_file = BibtexFile(args.bibtex_file)
-
-    # Parse pdfs and write to bibtex_file
-    ads_mirror = 'esoads.eso.org'
-    count = {'total': 0, 'already_included': 0, 'added': 0, 'failed': 0}
-    pdf_paths = glob.glob(args.directory + '*.pdf')
-    pdf_paths.sort()
-    for pdf_path in pdf_paths:
-        count['total'] += 1
-        # Skip if pdf is already included in bib_file
-        try:
-            if pdf_path.split(' - ')[1] in bibtex_file:
-                print(''.join(['*** Already in ', bibtex_file.path,
-                               ':\n', pdf_path, '\n'            ]))
-                count['already_included'] += 1
-                continue
-        except IndexError:
-            pass
-        # If pdf is new, add to the bibtex file
-        try:
-            bibtex_file.append(Article(path=pdf_path))
-            count['added'] += 1
-        except (LookupError, TypeError, urllib.error.HTTPError):
-            print("*** Cannot process {0}\n".format(pdf_path))
-            count['failed'] += 1
-        except urllib.error.URLError:
-            print("*** ERROR: pdftobib requires an internet connection")
-            sys.exit(None)
-
-    # Write new bibtex file
-    bibtex_file.write_to_file()
-
-    # Print a summary of the operation
-    print('Summary:')
-    print('Total PDFs: {0}'.format(count['total']))
-    print('Already included in {1}: {0}'.format(count['already_included'],
-                                                args.bibtex_file          ))
-    print('Added to {1}: {0}'.format(count['added'], args.bibtex_file))
-    print('Failed: {0}'.format(count['failed']))
-
-
-if __name__ == '__main__':
-    main()

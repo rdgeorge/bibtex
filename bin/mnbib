@@ -1,0 +1,61 @@
+#!/usr/bin/env python
+"""
+Parse a bbl file, select only those articles from a .bib file, and create a new
+.bib file with those contents.
+Also add arxiv identifiers to 'arxiv' in journal tag if a preprint.
+"""
+
+import argparse, re
+
+from bibtex.bibtexfile import BibtexFile
+
+
+def main():
+    parser = argparse.ArgumentParser(
+            description="Copy entries from a .bib file to a new one, if they"
+                        " are present in a .bbl file"
+                                     )
+    parser.add_argument("input_bib_file", type=str,
+                        help="asdlfa"
+                       )
+    parser.add_argument("bbl_file", type=str,
+                        help="asdf"
+                        )
+    parser.add_argument("output_bib_file", type=str, nargs='?', default=None,
+                        help="poui"
+                        )
+    args=parser.parse_args()
+
+    input_bib_file = BibtexFile(args.input_bib_file)
+    output_bib_file = BibtexFile(args.output_bib_file)
+    output_bib_file.articles = []
+
+    with open(args.bbl_file) as bbl:
+        bbl_lines = bbl.readlines()
+
+    for index, line in enumerate(bbl_lines):
+        if line[:8] == r'\bibitem':
+            try:
+                reference = re.search(r'(?<=\]\{)'
+                                      r'.*'
+                                      r'(?=\})',
+                                      bbl_lines[index]
+                                      ).group()
+
+            except AttributeError:
+                reference = re.search(r'(?<=\]\{)'
+                                      r'.*'
+                                      r'(?=\})',
+                                      bbl_lines[index + 1]
+                                      ).group()
+            output_bib_file.append(input_bib_file.get(reference))
+    for article in output_bib_file.articles:
+        if article.journal == 'arXiv':
+            article.bibtex['journal'] = 'arXiv:' + article.bibtex['eprint']
+
+    output_bib_file.write_to_file()
+
+
+if __name__ == '__main__':
+    main()
+

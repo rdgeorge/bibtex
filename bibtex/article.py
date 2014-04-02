@@ -100,6 +100,8 @@ class Article:
                 bibcode = line.index('arxiv')
                 if line[bibcode + 5] == ')':
                     continue
+                if line.split()[0][:5] != 'arxiv':
+                    continue
                 bibcode = line.split()[0][6:]
                 if bibcode[-2] == 'v':
                     bibcode = bibcode[:-2]
@@ -271,12 +273,18 @@ class Article:
         except KeyError:  # Some conference proceedings do not have journals
             self.journal = self.bibtex['series']
         self.reference   = self.bibtex['reference']
-        self.title       = self.bibtex['title']
+        try:
+            self.title   = self.bibtex['title']
+        except KeyError:
+            self.title   = ""
         self.type        = self.bibtex['type']
         # Replace ADS mirror with main page for inclusion in bibtex file
-        self.url         = self.bibtex['url'] = self.bibtex['adsurl'] = \
+        try:
+            self.url     = self.bibtex['url'] = self.bibtex['adsurl'] = \
                             self.bibtex['adsurl'].replace(self.ads_mirror,
                                                           'adsabs.harvard.edu')
+        except KeyError:
+            self.url     = ""
         self.year        = self.bibtex['year']
 
         # These were just to fill the member variables (not wanted in bibtex)

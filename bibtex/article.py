@@ -81,7 +81,7 @@ class Article:
 
         # First search for DOI and ABS/arXiv bibcode by regex
         bibcode = None
-        for line in pdf_txt:
+        for line in [self.path] + pdf_txt:
             line = line.lower()
             try:
                 identifier_type = 'doi'
@@ -113,16 +113,15 @@ class Article:
             try:
                 #abs bibcode
                 identifier_type = 'abs'
-                identifier = re.match(r'[0-9]{4}'     # year
-                                      r'[a-z&]{2,6}'  # journal
-                                      r'.*'           # some number of .'s
-                                      r'[0-9]{1,4}'   # volume
-                                      r'[a-z]?'       # can have 'L' etc
-                                      r'.*'           # some number of .'s
-                                      r'[0-9]{1,4}'   # start page
-                                      r'[a-z]'        # author initial
-                                      r'\n',          # new line
-                                      line          ).group()[:-1]
+                identifier = re.search(r'[0-9]{4}'     # year
+                                       r'[a-z&]{2,6}'  # journal
+                                       r'\.*'          # some number of .'s
+                                       r'[0-9]{1,4}'   # volume
+                                       r'[a-z]?'       # can have 'L' etc
+                                       r'\.*'          # some number of .'s
+                                       r'[0-9]{1,4}'   # start page
+                                       r'[a-z]',       # author initial
+                                       line          ).group()[:-1]
                 return identifier, identifier_type
             except AttributeError:
                 continue
@@ -130,6 +129,7 @@ class Article:
         # Not found, so have to construct an ABS bibcode
         # List so that order is preserved (for apjs)
         journals = [['a&a', 'aap'],
+                    ['asp conference series', 'aspc'],
                     ['the astronomical journal', 'aj'],
                     ['the astrophysical journal', 'apj'],
                     ['the astrophysical journal supplement', 'apjs'],

@@ -84,14 +84,17 @@ class Article:
         for line in [self.path] + pdf_txt:
             line = line.lower()
             try:
-                identifier_type = 'doi'
-                identifier = re.search(r'[0-9]{2}'       # 2 digits
-                                       r'\.'             # .
-                                       r'[0-9]{4}'       # 4 digits
-                                       r'/'              # /
-                                       r'.*?'            # min num of anything
-                                       r'(?=[\ (\n)])',  # end at space/newline
-                                       line            ).group()
+                #abs bibcode
+                identifier_type = 'abs'
+                identifier = re.search(r'[0-9]{4}'     # year
+                                       r'[a-z&]{2,6}'  # journal
+                                       r'\.*'          # some number of .'s
+                                       r'[0-9]{1,4}'   # volume
+                                       r'[a-z]?'       # can have 'L' etc
+                                       r'\.*'          # some number of .'s
+                                       r'[0-9]{1,4}'   # start page
+                                       r'[a-z]{1,2}',  # author initial
+                                       line          ).group()[:-1]
                 return identifier, identifier_type
             except AttributeError:
                 pass
@@ -111,17 +114,14 @@ class Article:
             except ValueError:
                 pass
             try:
-                #abs bibcode
-                identifier_type = 'abs'
-                identifier = re.search(r'[0-9]{4}'     # year
-                                       r'[a-z&]{2,6}'  # journal
-                                       r'\.*'          # some number of .'s
-                                       r'[0-9]{1,4}'   # volume
-                                       r'[a-z]?'       # can have 'L' etc
-                                       r'\.*'          # some number of .'s
-                                       r'[0-9]{1,4}'   # start page
-                                       r'[a-z]',       # author initial
-                                       line          ).group()[:-1]
+                identifier_type = 'doi'
+                identifier = re.search(r'[0-9]{2}'       # 2 digits
+                                       r'\.'             # .
+                                       r'[0-9]{4}'       # 4 digits
+                                       r'/'              # /
+                                       r'.*?'            # min num of anything
+                                       r'(?=[\ (\n)])',  # end at space/newline
+                                       line            ).group()
                 return identifier, identifier_type
             except AttributeError:
                 continue

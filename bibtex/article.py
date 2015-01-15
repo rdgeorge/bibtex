@@ -445,6 +445,7 @@ def _format_journal(journal):
         r'\pasj': 'PASJ',
         r'\pasp': 'PASP',
         r'\physrep': 'Phys. Rep.',
+        r'\prd': 'PhRvD',
     }
     if journal in journals:
         return journals[journal]
@@ -478,7 +479,8 @@ def _latex_to_text(latex):
                    [[r'\o'], 'ø'],
                    [[r'\v s'], 'š'],
                    [[r'\~', r'\tilde'], '~'],
-                   [[r'\ndash'], '-'],
+                   [[r'\ndash'], '--'],
+                   [[r'\mdash'], '---'],
                    [[r'\&'], '&'],
                    [[r"\'a"], 'á'],
                    [[r"\'e"], 'é'],

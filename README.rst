@@ -1,15 +1,15 @@
-abbrvnatR.bst and pdftobib
-==========================
+Astronomy latex bibliography tools
+==================================
 
-abbrvnatR.bst
+apj_style.bst
 -------------
 A customised version of the natbib style ``abbrvnat.bst``, replicating several
 features of the ApJ bibtex style.
 
 Usage is::
-    
+
     \usepackage{natbib}
-    \bibliographystyle{abbrvnatR}
+    \bibliographystyle{apj_style}
 
 The differences are:
 
@@ -17,7 +17,7 @@ The differences are:
 2. Titles are not shown
 3. Journal links to DOI (color: rhodamine)
 4. Volume, pages link to ADS (color: blue)
-5. A limit of 3 authors is shown, first author + et al. is shown if more
+5. A limit of 5 authors is shown, first author + et al. is shown if more
 
 Linking only the year of each inline reference to the full reference in the
 reference section can be acheived by adding the following to the ``.tex``
@@ -57,6 +57,20 @@ file::
         {}% Do nothing if patch fails
     \makeatother
 
+apj_style.bbx
+-------------
+A customised version of the biblatex style ``biblatex-phys.bbx``, replicating
+several features of the ApJ bibtex style.
+
+Usage is::
+
+    \usepackage[
+      backend=biber,
+      backref=true,
+      bibstyle=apj_style,
+      citestyle=authoryear-comp,
+      ]{biblatex}
+
 pdftobib
 --------
 A script that parses a given directory of PDF files (typically journal
@@ -65,9 +79,16 @@ entries for all PDF files successfully processed.
 
 This is specifically targeted at astrophysics papers.
 ``doi`` and ``url`` fields are returned with each bibtex entry, allowing for
-hyperlinking using ``abbrvnatR.bst``.
+hyperlinking using ``apj_style.bst`` or ``apj_style.bbx``.
 
 Usage is::
-    
+
     pdftobib [DIRECTORY (default: .)] [--bibtex_file FILE (default: articles.bib)]
+
+mnbib
+-----
+Prepares a large ``.bib`` file for submission by parsing the ``.bbl`` produced
+and copying only the used entries into a new ``.bib`` file.
+Also adds arXiv identifiers to an ``arxiv`` journal tag if the entry is an
+arXiv preprint.
 

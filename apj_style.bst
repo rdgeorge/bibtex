@@ -1,5 +1,6 @@
-%% File: `abbrvnatR.bst'
-%% A modification of `abbrv.bst' for use with natbib package
+%% File: `apj_style.bst'
+%% A modification of `abbrv.bst' replicating ApJ hyperlinks to DOI, ADS in
+%%   bibliography, hosted at https://bitbucket.org/rdg/bibtex
 %%
 %% Copyright 1993-2007 Patrick W Daly
 %% Max-Planck-Institut f\"ur Sonnensystemforschung
